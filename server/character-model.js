@@ -15,6 +15,7 @@ const communityNames = new Set(communities.map(item => item.name));
 const domainNames = new Set(domains.map(item => item.name));
 const equipmentNames = new Set(allEquipment.map(item => item.name));
 const emptyTraits = () => Object.fromEntries(traits.map(name => [name, { value: '', marked: false }]));
+function canonicalTraitValue(value) { const numeric = Number(value); return Number.isInteger(numeric) ? (numeric > 0 ? `+${numeric}` : String(numeric)) : String(value ?? ''); }
 
 function featureText(features = []) {
   return features.map(feature => typeof feature === 'string' ? feature : `${feature.name || ''}: ${feature.description || ''}`).join(' ');
@@ -78,7 +79,8 @@ function derivedValuesFor(character) {
 }
 
 function validTraitDistribution(values) {
-  return traits.every(name => /^[-+]?\d+$/.test(String(values?.[name]?.value ?? values?.[name] ?? ''))) && traitPool.every(value => Object.values(values || {}).filter(item => String(item?.value ?? item) === value).length === traitPool.filter(item => item === value).length);
+  const normalized = Object.fromEntries(traits.map(name => [name, canonicalTraitValue(values?.[name]?.value ?? values?.[name] ?? '')]));
+  return traits.every(name => /^[-+]?\d+$/.test(String(values?.[name]?.value ?? values?.[name] ?? ''))) && traitPool.every(value => Object.values(normalized).filter(item => item === value).length === traitPool.filter(item => item === value).length);
 }
 
 function validDomainCard(card, className, level) {
@@ -115,7 +117,7 @@ function buildCharacterFromChoices(body, id) {
   const derived = derivedValuesFor({ className: selectedClass?.name || body.className, ancestry: ancestry?.name || body.ancestry, subclassName: body.subclassName, level, armorId: armor?.id });
   const domainCardNames = Array.isArray(body.domainCardNames) ? body.domainCardNames : [];
   const domainCards = domainCardNames.slice(0, 11).map((value, index) => { const card = cardFor(value?.id || value?.name || value, domains); return card ? { ...card, inVault: index >= 5 } : { name: String(value), inVault: index >= 5 }; });
-  const submittedTraits = body.traits && typeof body.traits === 'object' ? Object.fromEntries(traits.map(name => [name, { value: String(body.traits[name]?.value ?? body.traits[name] ?? classTraits[traits.indexOf(name)] ?? ''), marked: Boolean(body.traits[name]?.marked) }])) : Object.fromEntries(traits.map((name, index) => [name, { value: classTraits[index] || '', marked: false }]));
+  const submittedTraits = body.traits && typeof body.traits === 'object' ? Object.fromEntries(traits.map(name => [name, { value: canonicalTraitValue(body.traits[name]?.value ?? body.traits[name] ?? classTraits[traits.indexOf(name)] ?? ''), marked: Boolean(body.traits[name]?.marked) }])) : Object.fromEntries(traits.map((name, index) => [name, { value: canonicalTraitValue(classTraits[index] || ''), marked: false }]));
   const submittedExperiences = (Array.isArray(body.experiences) ? body.experiences : []).slice(0, 2).map(item => typeof item === 'object' ? { text: String(item.text || '').slice(0, 120), modifier: String(item.modifier || '+2') } : { text: String(item).slice(0, 120), modifier: '+2' });
   const classStarter = String(selectedClass?.items || '').trim(); const starterInventory = [armor?.name, primary?.name, secondary?.name, classStarter].filter(Boolean);
   const submittedInventory = Array.from(new Set([...starterInventory, ...(Array.isArray(body.inventory) ? body.inventory : [])])).slice(0, 50).map(item => String(item).slice(0, 160));
@@ -157,6 +159,7 @@ function validateCharacterModel(character, changes) {
 
 function applyDerivedValues(character, changes) {
   const merged = { ...character, ...changes }; const selectedClass = cardFor(merged.className, classes); const subclass = subclassFor(merged.className, merged.subclassName); const ancestry = cardFor(merged.ancestry, ancestries); const armorLookup = Object.prototype.hasOwnProperty.call(changes, 'armorId') ? changes.armorId : Object.prototype.hasOwnProperty.call(changes, 'armorName') ? changes.armorName : (merged.armorId || merged.armorName); const armor = cardFor(armorLookup, equipment.armor || []); const primary = cardFor(merged.primaryWeapon?.sourceId || merged.primaryWeapon?.name || merged.primaryWeapon, equipment.weapons || []); const secondary = cardFor(merged.secondaryWeapon?.sourceId || merged.secondaryWeapon?.name || merged.secondaryWeapon, equipment.weapons || []); const configChanged = ['className', 'subclassName', 'ancestry', 'community', 'armorName', 'armorId', 'level'].some(key => Object.prototype.hasOwnProperty.call(changes, key)); const derived = configChanged ? derivedValuesFor({ ...merged, armorId: armor?.id || '' }) : {}; const next = { ...changes, ...derived };
+  if ('traits' in changes && changes.traits && typeof changes.traits === 'object') next.traits = Object.fromEntries(traits.map(name => [name, { value: canonicalTraitValue(changes.traits[name]?.value ?? changes.traits[name]), marked: Boolean(changes.traits[name]?.marked) }]));
   if (selectedClass) { next.ancestryCard = ancestry || null; next.communityCard = cardFor(merged.community, communities) || null; next.ancestryFeatures = ancestry?.features || []; next.communityFeatures = next.communityCard?.features || []; next.classFeatures = [...(selectedClass.classFeatures || []), ...unlockedSubclassFeatures(subclass, merged.level)]; next.classBackgroundQuestions = selectedClass.backgroundQuestions || []; next.classConnectionQuestions = selectedClass.connectionQuestions || []; Object.assign(next, specializedFor(merged, merged.className)); }
   if (armor) next.armorSlots = Array.from({ length: Number(armor.score || 0) }, (_, index) => ({ id: index + 1, marked: Boolean(character.armorSlots?.[index]?.marked) })); else if ('armorName' in changes || 'armorId' in changes) next.armorSlots = [];
   if ('armorName' in changes || 'armorId' in changes || 'primaryWeapon' in changes || 'secondaryWeapon' in changes) next.inventory = Array.from(new Set([...(character.inventory || []), armor?.name, primary?.name, secondary?.name].filter(Boolean))).slice(0, 50);

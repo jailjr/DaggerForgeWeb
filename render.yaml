@@ -2,7 +2,7 @@ services:
   - type: web
     name: daggerforge-api
     runtime: docker
-    plan: starter
+    plan: free
     dockerfilePath: ./Dockerfile
     dockerContext: .
     healthCheckPath: /health
@@ -14,9 +14,9 @@ services:
       - key: REQUIRE_PRODUCTION_SERVICES
         value: "1"
       - key: DATABASE_URL
-        fromDatabase:
-          name: daggerforge-db
-          property: connectionString
+        sync: false
+      - key: PUBLIC_APP_URL
+        value: https://daggerforgeweb.onrender.com
       - key: CORS_ORIGIN
         sync: false
       - key: SUPABASE_URL
@@ -43,8 +43,3 @@ services:
         value: "60000"
       - key: TRUST_PROXY
         value: "1"
-databases:
-  - name: daggerforge-db
-    plan: basic-256mb
-    databaseName: daggerforge
-    user: daggerforge

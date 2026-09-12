@@ -5,10 +5,11 @@ Build and run the image with a secret manager or GitHub Actions environment. Do 
 Required runtime secrets:
 
 - `DATABASE_URL` — hosted Postgres connection string with SSL.
+- `PUBLIC_APP_URL` — explicit HTTPS origin used for campaign join and participant recovery links.
 - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` — private avatar and backup storage.
 - `CORS_ORIGIN` — exact HTTPS frontend origin.
 - `REQUIRE_PRODUCTION_SERVICES=1` — fail-fast production validation.
-- `SENTRY_DSN` — durable error/security event aggregation. The webhook is retained only as an optional compatibility sink.
+- `SENTRY_DSN` — optional durable error/security event aggregation. Structured logs and health/readiness are the required baseline.
 
 Recommended operational settings:
 
@@ -19,8 +20,8 @@ Recommended operational settings:
 - `SENTRY_DSN` for durable error/security delivery; `LOG_AGGREGATION_WEBHOOK` is optional.
 - `MONITOR_BASE_URL` and `MONITOR_ALERT_WEBHOOK` as GitHub repository or environment secrets.
 
-The repository includes a Render Blueprint in `render.yaml`. Connect the repository in Render, create the Blueprint, and provide the `sync: false` secrets in the Render dashboard. GitHub Actions verifies every push and pull request. The dedicated `Deploy production` workflow publishes `ghcr.io/<owner>/<repo>:<sha>` and `:latest`, then requests a Render release.
+The repository includes a Render Blueprint in `render.yaml`. The web service uses Render's free compute plan. The Blueprint intentionally does not create a Render Postgres database: Render's free Postgres expires after 30 days and does not provide backups, so configure `DATABASE_URL` with the Supabase Postgres session-pooler connection string for the existing free Supabase project. Provide the `sync: false` secrets in the Render dashboard, including `PUBLIC_APP_URL=https://<your-service>.onrender.com`. GitHub Actions verifies every push and pull request. The dedicated `Deploy production` workflow publishes `ghcr.io/<owner>/<repo>:<sha>` and `:latest`, then requests a Render release.
 
 In GitHub, create a protected `production` environment and add `RENDER_DEPLOY_HOOK_URL` as an environment secret. Add approval protection to that environment if releases need human approval. The workflow intentionally fails before release when this secret is absent, rather than reporting a successful non-deployment. Put `MONITOR_BASE_URL` and `MONITOR_ALERT_WEBHOOK` in the same environment so the scheduled health monitor uses the protected production configuration.
 
-The container healthcheck calls `/health`; external monitoring also validates `/metrics`. Configure Postgres point-in-time recovery, storage bucket versioning/retention, and deployment rollback policy at the provider level.
+The container healthcheck calls `/health`; it validates both database connectivity and the applied application schema. External monitoring also validates `/metrics`. Configure Supabase database backups/PITR where available, storage bucket versioning/retention, and deployment rollback policy at the provider level.
