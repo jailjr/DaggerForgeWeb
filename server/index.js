@@ -25,8 +25,10 @@ const port = Number(process.env.PORT || 8787);
 const dataDir = path.join(process.cwd(), 'data');
 const dbFile = path.join(dataDir, 'campaigns.json');
 const avatarDir = path.join(dataDir, 'avatars');
+const backupDir = path.join(dataDir, 'backups');
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(avatarDir, { recursive: true });
+fs.mkdirSync(backupDir, { recursive: true });
 
 function load() {
   if (!fs.existsSync(dbFile)) return { campaigns: {}, participants: {}, events: [] };
@@ -34,7 +36,9 @@ function load() {
 }
 let db = load(); db.sessions = db.sessions || {};
 const postgres = createPostgresStore();
+const metrics = { requests: 0, errors: 0, backups: 0, startedAt: Date.now() };
 function save() { const tmp = `${dbFile}.tmp`; fs.writeFileSync(tmp, JSON.stringify(db, null, 2)); fs.renameSync(tmp, dbFile); if (postgres) postgres.persist(db).catch(error => console.error(`Postgres persistence failed: ${error.message}`)); }
+function backupSnapshot(campaignId) { const stamp = new Date().toISOString().replace(/[:.]/g, '-'); const campaigns = Object.values(db.campaigns).filter(campaign => !campaignId || campaign.id === campaignId).map(campaign => { const copy = clone(campaign); delete copy.gmTokenHash; delete copy.playerTokenHash; return copy; }); const participants = Object.values(db.participants).filter(participant => !campaignId || participant.campaignId === campaignId).map(participant => { const copy = { ...participant }; delete copy.tokenHash; return copy; }); const snapshot = campaignId ? { schemaVersion: 1, exportedAt: now(), campaign: campaigns[0] || null, participants } : { schemaVersion: 1, exportedAt: now(), campaigns, participants }; const target = path.join(backupDir, `daggerforge-${stamp}.json`); fs.writeFileSync(target, JSON.stringify(snapshot, null, 2)); const retention = Math.max(1, Number(process.env.BACKUP_RETENTION || 14)); const files = fs.readdirSync(backupDir).filter(name => name.endsWith('.json')).sort().reverse(); files.slice(retention).forEach(name => fs.unlinkSync(path.join(backupDir, name))); metrics.backups += 1; return { file: target, campaigns: campaigns.length, createdAt: snapshot.exportedAt, name: path.basename(target) }; }
 function id() { return crypto.randomUUID(); }
 function token() { return crypto.randomBytes(32).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
 function hash(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
@@ -61,7 +65,8 @@ async function route(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const parts = url.pathname.split('/').filter(Boolean);
   try {
-    if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, time: now() });
+    if (req.method === 'GET' && url.pathname === '/health') { let persistence = { provider: 'local-json', ok: true }; if (postgres) { try { persistence = await postgres.health(); } catch (error) { persistence = { provider: 'postgres', ok: false, error: error.message }; } } return json(res, persistence.ok ? 200 : 503, { ok: persistence.ok, time: now(), uptimeSeconds: Math.floor((Date.now() - metrics.startedAt) / 1000), persistence, backups: fs.readdirSync(backupDir).filter(name => name.endsWith('.json')).length }); }
+    if (req.method === 'GET' && url.pathname === '/metrics') { const body = [`daggerforge_requests_total ${metrics.requests}`, `daggerforge_errors_total ${metrics.errors}`, `daggerforge_backups_total ${metrics.backups}`, `daggerforge_uptime_seconds ${Math.floor((Date.now() - metrics.startedAt) / 1000)}`].join('\n') + '\n'; res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4', 'cache-control': 'no-store' }); return res.end(body); }
     if (req.method === 'POST' && url.pathname === '/api/campaigns') {
       const body = await readBody(req); const gmToken = token(); const playerToken = token(); const campaign = { id: id(), name: String(body.name || 'Untitled Campaign').slice(0, 120), mode: 'PREPARATION', joinEnabled: true, gmTokenHash: hash(gmToken), playerTokenHash: hash(playerToken), createdAt: now(), characters: {}, gmLibrary: { adversaries: [], environments: [], items: [], encounters: [] }, encounterTemplates: [] };
       db.campaigns[campaign.id] = campaign; save(); return json(res, 201, { campaign: { id: campaign.id, name: campaign.name, mode: campaign.mode }, gmToken, playerToken });
@@ -69,7 +74,7 @@ async function route(req, res) {
     if (req.method === 'POST' && url.pathname === '/api/session') { const body = await readBody(req); const campaign = db.campaigns[body.campaignId]; const actor = campaign && findAccess(campaign, String(body.accessToken || '')); if (!campaign || !actor || actor.role === 'JOIN') return error(res, 401, 'Invalid access credentials.'); const sessionId = token(); db.sessions[hash(sessionId)] = { campaignId: campaign.id, actorId: actor.id, role: actor.role, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 }; save(); res.setHeader('set-cookie', cookieHeader(sessionId, 30 * 24 * 60 * 60)); return json(res, 200, { ok: true, role: actor.role, campaignId: campaign.id }); }
     if (req.method === 'POST' && url.pathname === '/api/session/logout') { const sessionId = cookies(req).df_session; if (sessionId) delete db.sessions[hash(sessionId)]; save(); res.setHeader('set-cookie', cookieHeader('', 0)); return json(res, 200, { ok: true }); }
     if (req.method === 'POST' && url.pathname === '/api/campaigns/import') {
-      const body = await readBody(req); const source = body && body.campaign; if (!source || body.schemaVersion !== 1) return error(res, 400, 'Unsupported export format.');
+      const body = await readBody(req); const source = body && body.campaign; if (!source || body.schemaVersion !== 1 || typeof source.name !== 'string' || typeof source.characters !== 'object') return error(res, 400, 'Unsupported or incomplete export format.');
       const gmToken = token(); const playerToken = token(); const campaign = { id: id(), name: String(source.name || 'Imported Campaign').slice(0, 120), mode: source.mode === 'PLAY' ? 'PLAY' : 'PREPARATION', joinEnabled: source.joinEnabled !== false, gmTokenHash: hash(gmToken), playerTokenHash: hash(playerToken), createdAt: now(), characters: {}, gmLibrary: source.gmLibrary && typeof source.gmLibrary === 'object' ? source.gmLibrary : { adversaries: [], environments: [], items: [], encounters: [] }, encounterTemplates: Array.isArray(source.encounterTemplates) ? source.encounterTemplates : [] };
       const sourceCharacters = source.characters && typeof source.characters === 'object' ? source.characters : {};
       Object.values(sourceCharacters).slice(0, 100).forEach(raw => { const character = raw && typeof raw === 'object' ? raw : {}; const characterId = id(); campaign.characters[characterId] = { id: characterId, name: String(character.name || 'Imported Character').slice(0, 120), className: String(character.className || ''), ancestry: String(character.ancestry || ''), color: String(character.color || '#a88be3'), initials: String(character.initials || 'PC').slice(0, 4), hp: Number.isFinite(character.hp) ? character.hp : 0, hpMax: Number.isFinite(character.hpMax) ? character.hpMax : 6, hope: Number.isFinite(character.hope) ? character.hope : 0, stress: Number.isFinite(character.stress) ? character.stress : 0, armor: Number.isFinite(character.armor) ? character.armor : 0, level: Number.isFinite(character.level) ? character.level : 1, complete: character.complete === true, ownerId: null, inventory: Array.isArray(character.inventory) ? character.inventory.slice(0, 50).map(String) : [], privateNotes: '', version: 1 }; });
@@ -80,6 +85,9 @@ async function route(req, res) {
     const actor = findAccess(campaign, bearer(req)) || sessionActor(req, campaign.id); if (!actor || (actor.role === 'JOIN' && !(req.method === 'POST' && parts[3] === 'join'))) return error(res, 404, 'Not found');
     if (campaign.archivedAt && !(req.method === 'GET' || req.method === 'DELETE' || parts[3] === 'export')) return error(res, 410, 'Campaign is archived.');
     if (req.method === 'GET' && parts.length === 3) return json(res, 200, view(campaign, actor));
+    if (req.method === 'POST' && parts[3] === 'backup') { if (actor.role !== 'GM') return error(res, 404, 'Not found'); return json(res, 201, backupSnapshot()); }
+    if (req.method === 'GET' && parts[3] === 'backups' && !parts[4]) { if (actor.role !== 'GM') return error(res, 404, 'Not found'); const backups = fs.readdirSync(backupDir).filter(name => name.endsWith('.json')).sort().reverse().map(name => ({ name, createdAt: fs.statSync(path.join(backupDir, name)).mtime.toISOString(), sizeBytes: fs.statSync(path.join(backupDir, name)).size })); return json(res, 200, { backups }); }
+    if (req.method === 'GET' && parts[3] === 'backups' && parts[4]) { if (actor.role !== 'GM') return error(res, 404, 'Not found'); const filename = path.basename(parts[4]); const target = path.join(backupDir, filename); if (!fs.existsSync(target)) return error(res, 404, 'Backup not found'); return json(res, 200, JSON.parse(fs.readFileSync(target, 'utf8'))); }
     if (req.method === 'GET' && parts[3] === 'content') { if (actor.role !== 'GM') return error(res, 404, 'Not found'); const requested = url.searchParams.get('type'); const types = requested && ['adversaries', 'environments', 'items'].includes(requested) ? [requested] : ['adversaries', 'environments', 'items']; return json(res, 200, { content: Object.fromEntries(types.map(type => [type, libraryEntries(campaign, type)])) }); }
     if (req.method === 'GET' && parts[3] === 'presence') return json(res, 200, { presence: presenceFor(campaign, actor) });
     if (req.method === 'POST' && parts[3] === 'presence') { campaign.presence = campaign.presence || {}; campaign.presence[actor.id] = { participantId: actor.id, role: actor.role, lastSeen: now() }; save(); return json(res, 200, { presence: presenceFor(campaign, actor) }); }
@@ -141,6 +149,7 @@ function serveStatic(req, res) {
   res.writeHead(200, { 'content-type': types[path.extname(finalTarget)] || 'application/octet-stream', 'cache-control': relative === 'index.html' ? 'no-cache' : 'public, max-age=31536000, immutable' }); res.end(fs.readFileSync(finalTarget)); return true;
 }
 const server = http.createServer((req, res) => {
+  metrics.requests += 1;
   res.setHeader('access-control-allow-origin', process.env.CORS_ORIGIN || 'http://127.0.0.1:5173');
   res.setHeader('access-control-allow-credentials', 'true');
   res.setHeader('access-control-allow-headers', 'authorization,content-type');
@@ -152,5 +161,5 @@ const server = http.createServer((req, res) => {
   if (serveStatic(req, res)) return;
   route(req, res);
 });
-async function boot() { if (postgres) { await postgres.migrate(); db = await postgres.hydrate(db); db.sessions = db.sessions || {}; } server.listen(port, '127.0.0.1', () => console.log(`DaggerForge API listening on http://127.0.0.1:${port}${postgres ? ' (Postgres persistence)' : ''}`)); }
+async function boot() { if (postgres) { await postgres.migrate(); db = await postgres.hydrate(db); db.sessions = db.sessions || {}; } server.listen(port, '127.0.0.1', () => console.log(`DaggerForge API listening on http://127.0.0.1:${port}${postgres ? ' (Postgres persistence)' : ''}`)); if (process.env.ENABLE_BACKUPS === '1') { const interval = Math.max(60_000, Number(process.env.BACKUP_INTERVAL_MS || 21_600_000)); setInterval(() => { try { backupSnapshot(); } catch (error) { metrics.errors += 1; console.error(`Backup failed: ${error.message}`); } }, interval); } }
 boot().catch(error => { console.error(`Unable to start persistence layer: ${error.message}`); process.exitCode = 1; });
