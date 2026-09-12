@@ -50,3 +50,12 @@ create table audit_events (
   created_at timestamptz not null default now()
 );
 create index audit_campaign_time_idx on audit_events(campaign_id, created_at desc);
+
+-- Development-compatible snapshot adapter used by server/postgres-store.js.
+-- The normalized tables above are the long-term production schema; this table
+-- provides a zero-downtime bridge while campaign repositories are migrated.
+create table if not exists daggerforge_state (
+  id integer primary key check (id = 1),
+  payload jsonb not null,
+  updated_at timestamptz not null default now()
+);
