@@ -8,7 +8,7 @@ const directory = path.join(process.cwd(), 'migrations');
 describe('Postgres migration runner', () => {
   it('loads ordered migrations with stable checksums', () => {
     const files = migrationFiles(directory);
-    expect(files.map(file => file.version)).toEqual([1, 2]);
+    expect(files.map(file => file.version)).toEqual([1, 2, 3]);
     expect(files.every(file => /^[a-f0-9]{64}$/.test(file.checksum))).toBe(true);
     expect(files[0].name).toBe('001_initial.sql');
   });
@@ -30,10 +30,10 @@ describe('Postgres migration runner', () => {
       }, release: () => {} }),
     };
     const first = await runMigrations(pool, directory);
-    expect(first.latest).toBe(2);
-    expect(executed).toHaveLength(2);
-    expect(await runMigrations(pool, directory)).toEqual({ applied: 2, latest: 2 });
-    expect(executed).toHaveLength(2);
+    expect(first.latest).toBe(3);
+    expect(executed).toHaveLength(3);
+    expect(await runMigrations(pool, directory)).toEqual({ applied: 3, latest: 3 });
+    expect(executed).toHaveLength(3);
     history[0].checksum = '0'.repeat(64);
     await expect(runMigrations(pool, directory)).rejects.toThrow(/Migration drift detected/);
   });
