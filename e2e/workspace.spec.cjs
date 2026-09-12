@@ -131,3 +131,24 @@ test('GM can assign a participant and confirm access revocation', async ({ page,
   await page.getByRole('dialog', { name: /revoke browser participant/i }).getByRole('button', { name: 'Revoke access' }).click();
   await expect(row).toContainText('revoked');
 });
+
+test('player can mark runtime resources from the interactive character sheet', async ({ page, request }) => {
+  const campaignResponse = await request.post('http://127.0.0.1:8787/api/campaigns', { data: { name: 'Resource Browser Campaign' } });
+  const campaign = await campaignResponse.json();
+  const characterResponse = await request.post(`http://127.0.0.1:8787/api/campaigns/${campaign.campaign.id}/characters`, { headers: { authorization: `Bearer ${campaign.gmToken}` }, data: { name: 'Resource Browser Hero', className: 'Bard', ancestry: 'Human', armorName: 'Gambeson Armor' } });
+  const character = await characterResponse.json();
+  const joinResponse = await request.post(`http://127.0.0.1:8787/api/campaigns/${campaign.campaign.id}/join`, { headers: { authorization: `Bearer ${campaign.playerToken}` }, data: { nickname: 'Resource Player' } });
+  const joined = await joinResponse.json();
+  await page.goto(`/?campaign=${encodeURIComponent(campaign.campaign.id)}&token=${encodeURIComponent(campaign.playerToken)}`);
+  await page.getByLabel('Nickname').fill('Resource Player');
+  await page.getByRole('button', { name: 'Join campaign' }).click();
+  if (page.viewportSize().width < 760) await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('button', { name: 'Characters', exact: true }).click();
+  await page.getByRole('button', { name: 'Claim character' }).click();
+  await expect(page.getByRole('heading', { name: 'Resource Browser Hero' })).toBeVisible({ timeout: 15000 });
+  await page.getByRole('button', { name: /HP 1 of .*unmarked/i }).click();
+  await expect(page.getByRole('button', { name: /HP 1 of .*marked/i })).toHaveAttribute('aria-pressed', 'true');
+  const persisted = await request.get(`http://127.0.0.1:8787/api/campaigns/${campaign.campaign.id}`, { headers: { authorization: `Bearer ${campaign.gmToken}` } });
+  const refreshed = await persisted.json();
+  expect(refreshed.characters.find(item => item.id === character.id).hp).toBe(1);
+});
