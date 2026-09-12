@@ -26,6 +26,8 @@ function normalizeTraitProgression(character) {
     tier,
     increasedTraits: sameTier && Array.isArray(current.increasedTraits) ? [...new Set(current.increasedTraits.filter(name => traitNames.includes(name)))] : [],
     traitAdvancementUses: sameTier ? Math.max(0, Math.min(MAX_TRAIT_ADVANCEMENT_USES, Number(current.traitAdvancementUses) || 0)) : 0,
+    hpAdvancements: Math.max(0, Math.min(12, Number(current.hpAdvancements) || 0)),
+    stressAdvancements: Math.max(0, Math.min(12, Number(current.stressAdvancements) || 0)),
     history: Array.isArray(current.history) ? current.history : [],
     advancements: Array.isArray(current.advancements) ? current.advancements : [],
   };

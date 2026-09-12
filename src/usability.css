@@ -15,3 +15,64 @@
 .avatar-upload input:disabled{display:none}
 .trait-list{display:grid;gap:8px;margin-top:10px}.trait-row{display:grid;grid-template-columns:minmax(110px,1fr) minmax(48px,76px) minmax(0,1.6fr);align-items:center;gap:9px;padding:8px 0;border-top:1px solid var(--line)}.trait-row:first-child{border-top:0}.trait-name{font-size:11px;font-weight:600}.trait-modifier{display:block;color:#e7d8ff;font:600 14px 'DM Mono',monospace;text-align:center}.trait-tier-status{color:#7bb78a;font-size:10px}.trait-progression-meta{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:11px}.trait-progression-meta b{color:var(--text)}.level-readonly{display:block;padding:8px 10px}.advancement-choice-list,.advancement-traits{display:grid;gap:8px;margin-top:14px}.advancement-choice,.advancement-trait{display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:8px;padding:11px 12px;cursor:pointer}.advancement-choice small,.advancement-trait small{display:block;color:var(--muted);margin-top:3px}.advancement-choice.selected,.advancement-trait.selected{border-color:#8c6abd;background:#241f31}.advancement-choice:disabled,.advancement-trait:disabled{opacity:.48;cursor:not-allowed}.advancement-trait{padding:9px 12px}
 @media(max-width:520px){.trait-row{grid-template-columns:90px 48px 1fr;gap:6px}.trait-modifier{font-size:12px}.trait-progression-meta{display:grid;gap:6px}}
+/* Gameplay-first character sheet adaptation */
+.sheet-top { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:1rem; margin-top:1rem; }
+.sheet-identity-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.65rem; }
+.sheet-identity-grid > div,.sheet-stat-card { border:1px solid var(--border); border-radius:14px; padding:.8rem .9rem; background:var(--surface-raised); min-height:78px; }
+.sheet-identity-grid strong,.sheet-identity-grid small { display:block; margin-top:.25rem; }
+.sheet-identity-grid strong { font-size:1rem; color:var(--text); }
+.sheet-identity-grid small,.sheet-stat-card small { color:var(--muted); }
+.sheet-level { border-color:var(--char-color)!important; }
+.sheet-level .text-button { margin-left:.5rem; }
+.sheet-stat-strip { display:grid; grid-template-columns:repeat(2,130px); gap:.65rem; }
+.sheet-stat-card { display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; }
+.sheet-stat-card span { text-transform:uppercase; letter-spacing:.08em; font-size:.7rem; color:var(--muted); font-weight:700; }
+.sheet-stat-card strong { font-size:2rem; line-height:1.1; color:var(--char-color); }
+.sheet-traits { margin-top:1rem; }
+.sheet-section-heading,.sheet-panel-title { display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
+.sheet-section-heading h3,.sheet-panel-title h3 { margin:.15rem 0 0; }
+.sheet-traits-grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:.55rem; margin-top:.65rem; }
+.sheet-trait-card { border:1px solid var(--border); border-radius:12px; padding:.7rem; background:var(--surface-raised); }
+.trait-card-head { display:flex; align-items:center; justify-content:space-between; gap:.4rem; }
+.trait-card-head span { font-size:.78rem; font-weight:700; }
+.trait-card-head strong { color:var(--char-color); font-size:1.2rem; }
+.trait-actions { display:flex; flex-wrap:wrap; gap:.2rem .45rem; margin-top:.45rem; color:var(--muted); font-size:.68rem; }
+.trait-actions span:not(:last-child)::after { content:' ·'; margin-left:.45rem; }
+.sheet-section-nav { display:flex; align-items:center; gap:.45rem; margin:1rem 0 0; overflow:auto; }
+.sheet-progression-summary { display:flex; align-items:center; flex-wrap:wrap; gap:.75rem; margin-top:.65rem; padding:.65rem .8rem; border:1px solid var(--border); border-radius:12px; background:var(--surface-raised); color:var(--muted); font-size:.78rem; }
+.sheet-progression-summary strong { color:var(--text); }
+.sheet-section-nav a,.sheet-section-nav button { white-space:nowrap; border:1px solid var(--border); border-radius:999px; padding:.4rem .65rem; background:var(--surface-raised); color:var(--muted); text-decoration:none; font-size:.75rem; }
+.sheet-gameplay-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:1rem; margin-top:1rem; }
+.sheet-column { display:grid; gap:1rem; align-content:start; }
+.sheet-panel { border:1px solid var(--border); border-radius:16px; padding:1rem; background:var(--surface-raised); }
+.sheet-panel h3 { font-size:1.1rem; }
+.panel-hint { color:var(--muted); font-size:.82rem; margin:.75rem 0; }
+.damage-thresholds { display:grid; grid-template-columns:repeat(3,1fr); gap:.5rem; }
+.damage-thresholds > div { border:1px solid var(--border); border-radius:10px; padding:.5rem; text-align:center; }
+.damage-thresholds span { display:block; color:var(--muted); font-size:.7rem; text-transform:uppercase; font-weight:700; }
+.damage-thresholds strong { display:block; margin-top:.2rem; color:var(--char-color); }
+.resource-track { margin-top:.8rem; }
+.resource-track-head { display:flex; justify-content:space-between; margin-bottom:.35rem; font-size:.9rem; }
+.resource-track-head small { color:var(--muted); font-weight:400; }
+.resource-pips { display:flex; flex-wrap:wrap; gap:.35rem; }
+.resource-pip { width:23px; height:16px; border:1px solid var(--border-strong); border-radius:5px; background:transparent; cursor:pointer; }
+.resource-pip.filled { background:var(--pip-color); border-color:var(--pip-color); box-shadow:0 0 0 2px color-mix(in srgb,var(--pip-color) 18%,transparent); }
+.feature-copy { margin-top:.75rem; padding:.65rem; border-radius:9px; background:var(--surface); color:var(--muted); font-size:.8rem; }
+.weapon-card { display:grid; grid-template-columns:36px 1fr; gap:.7rem; padding:.75rem 0; border-bottom:1px solid var(--border); }
+.weapon-card:last-child { border-bottom:0; padding-bottom:0; }
+.weapon-card-icon { width:36px; height:36px; display:grid; place-items:center; color:var(--char-color); border:1px solid var(--border); border-radius:10px; }
+.weapon-card h4 { margin:.2rem 0; }
+.weapon-card p,.weapon-card small { display:block; color:var(--muted); margin:.15rem 0; font-size:.8rem; }
+.armor-summary { display:flex; gap:.7rem; align-items:center; }
+.armor-summary svg { color:var(--char-color); }
+.armor-summary strong,.armor-summary span { display:block; }
+.armor-summary span { color:var(--muted); font-size:.8rem; margin-top:.2rem; }
+.domain-summary { display:flex; gap:.8rem; align-items:center; color:var(--muted); }
+.domain-summary b { color:var(--text); }
+.domain-summary svg { vertical-align:middle; color:var(--char-color); }
+.domain-card-row { display:flex; justify-content:space-between; gap:.6rem; padding:.55rem 0; border-bottom:1px solid var(--border); }
+.domain-card-row small { color:var(--muted); }
+.modal-intro { color:var(--muted); }
+@media (max-width: 1100px) { .sheet-traits-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (max-width: 760px) { .sheet-top,.sheet-gameplay-grid { grid-template-columns:1fr; } .sheet-stat-strip { grid-template-columns:repeat(2,minmax(0,1fr)); } .sheet-identity-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .sheet-level { grid-column:span 2; } .sheet-traits-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .sheet-section-nav { position:sticky; top:0; z-index:3; padding:.5rem 0; background:var(--surface); } .sheet-panel { padding:.8rem; } }
+@media (max-width: 420px) { .sheet-identity-grid { grid-template-columns:1fr; } .sheet-level { grid-column:auto; } .sheet-traits-grid { grid-template-columns:1fr; } .damage-thresholds strong { font-size:.8rem; } }
