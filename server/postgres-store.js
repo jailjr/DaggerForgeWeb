@@ -34,7 +34,7 @@ function createPostgresStore() {
       await client.query('commit');
     } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
   }
-  async function consumeRateLimit(bucketKey, max, windowMs) { const result = await pool.query(`insert into rate_limit_buckets (bucket_key,window_started,hit_count) values ($1,now(),1) on conflict (bucket_key) do update set hit_count=case when extract(epoch from (now()-rate_limit_buckets.window_started))*1000 >= $3 then 1 else rate_limit_buckets.hit_count+1 end, window_started=case when extract(epoch from (now()-rate_limit_buckets.window_started))*1000 >= $3 then now() else rate_limit_buckets.window_started end returning hit_count`, [bucketKey, max, windowMs]); return result.rows[0].hit_count > max; }
+  async function consumeRateLimit(bucketKey, max, windowMs) { const result = await pool.query(`insert into rate_limit_buckets (bucket_key,window_started,hit_count) values ($1,now(),1) on conflict (bucket_key) do update set hit_count=case when extract(epoch from (now()-rate_limit_buckets.window_started))*1000 >= $2 then 1 else rate_limit_buckets.hit_count+1 end, window_started=case when extract(epoch from (now()-rate_limit_buckets.window_started))*1000 >= $2 then now() else rate_limit_buckets.window_started end returning hit_count`, [bucketKey, windowMs]); return result.rows[0].hit_count > max; }
   return { migrate, hydrate, persist, consumeRateLimit, async health() { const result = await pool.query('select 1 as ok'); return { ok: result.rows[0].ok === 1, provider: 'postgres-normalized' }; }, close: () => pool.end() };
 }
 module.exports = { createPostgresStore };
