@@ -1,0 +1,65 @@
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: daggerforge-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and publish image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: publish
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - name: Require deployment hook
+        env:
+          DEPLOY_WEBHOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          test -n "$DEPLOY_WEBHOOK_URL" || { echo "Configure the RENDER_DEPLOY_HOOK_URL secret in the production environment."; exit 1; }
+      - name: Trigger Render deployment
+        env:
+          DEPLOY_WEBHOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: curl --fail --silent --show-error --retry 3 --retry-all-errors -X POST "$DEPLOY_WEBHOOK_URL"
+      - name: Publish deployment summary
+        run: |
+          echo "## Production deployment requested" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image published from commit \`${{ github.sha }}\`. Render will report its build and release status in its dashboard." >> "$GITHUB_STEP_SUMMARY"

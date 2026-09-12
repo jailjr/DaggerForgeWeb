@@ -19,4 +19,8 @@ Recommended operational settings:
 - `SENTRY_DSN` for durable error/security delivery; `LOG_AGGREGATION_WEBHOOK` is optional.
 - `MONITOR_BASE_URL` and `MONITOR_ALERT_WEBHOOK` as GitHub repository or environment secrets.
 
-The repository includes a Render Blueprint in `render.yaml`. Connect the repository in Render, create the Blueprint, and provide the `sync: false` secrets in the Render dashboard. GitHub Actions verifies pull requests; pushes to `main` publish `ghcr.io/<owner>/<repo>:<sha>` and `:latest`, then call `RENDER_DEPLOY_HOOK_URL` when configured. The container healthcheck calls `/health`; external monitoring also validates `/metrics`. Configure Postgres point-in-time recovery, storage bucket versioning/retention, and deployment rollback policy at the provider level.
+The repository includes a Render Blueprint in `render.yaml`. Connect the repository in Render, create the Blueprint, and provide the `sync: false` secrets in the Render dashboard. GitHub Actions verifies every push and pull request. The dedicated `Deploy production` workflow publishes `ghcr.io/<owner>/<repo>:<sha>` and `:latest`, then requests a Render release.
+
+In GitHub, create a protected `production` environment and add `RENDER_DEPLOY_HOOK_URL` as an environment secret. Add approval protection to that environment if releases need human approval. The workflow intentionally fails before release when this secret is absent, rather than reporting a successful non-deployment. Put `MONITOR_BASE_URL` and `MONITOR_ALERT_WEBHOOK` in the same environment so the scheduled health monitor uses the protected production configuration.
+
+The container healthcheck calls `/health`; external monitoring also validates `/metrics`. Configure Postgres point-in-time recovery, storage bucket versioning/retention, and deployment rollback policy at the provider level.
