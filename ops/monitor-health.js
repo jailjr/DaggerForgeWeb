@@ -1,0 +1,12 @@
+import http from 'node:http';
+import https from 'node:https';
+
+const base = (process.env.MONITOR_BASE_URL || 'http://127.0.0.1:8787').replace(/\/$/, '');
+const intervalMs = Math.max(30_000, Number(process.env.MONITOR_INTERVAL_MS || 60_000));
+const webhook = process.env.MONITOR_ALERT_WEBHOOK;
+let lastFailure = '';
+function get(path) { return new Promise((resolve, reject) => { const url = new URL(`${base}${path}`); const client = url.protocol === 'https:' ? https : http; const req = client.get(url, { timeout: 10_000, headers: { accept: 'application/json,text/plain' } }, res => { let body = ''; res.on('data', chunk => body += chunk); res.on('end', () => resolve({ status: res.statusCode, body })); }); req.on('timeout', () => req.destroy(new Error('monitor request timed out'))); req.on('error', reject); }); }
+function post(urlString, payload) { return new Promise((resolve, reject) => { const url = new URL(urlString); const client = url.protocol === 'https:' ? https : http; const body = JSON.stringify(payload); const req = client.request(url, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } }, res => { res.resume(); res.on('end', resolve); }); req.on('error', reject); req.end(body); }); }
+async function alert(message) { if (!webhook) return; try { await post(webhook, { content: message, text: message, username: 'DaggerForge monitor' }); } catch (error) { console.error(`Alert delivery failed: ${error.message}`); } }
+async function check() { try { const health = await get('/health'); const metrics = await get('/metrics'); if (health.status < 200 || health.status >= 300) throw new Error(`health returned ${health.status}`); const parsed = JSON.parse(health.body); if (!parsed.ok || !parsed.persistence?.ok) throw new Error('health reported unhealthy persistence'); if (metrics.status < 200 || metrics.status >= 300 || !metrics.body.includes('daggerforge_requests_total')) throw new Error(`metrics returned ${metrics.status}`); if (lastFailure) { await alert(`✅ DaggerForge recovered at ${base}: ${lastFailure}`); lastFailure = ''; } console.log(`${new Date().toISOString()} healthy`); return true; } catch (error) { lastFailure = error.message; console.error(`${new Date().toISOString()} unhealthy: ${error.message}`); await alert(`🚨 DaggerForge unhealthy at ${base}: ${error.message}`); return false; } }
+(async () => { const healthy = await check(); if (process.env.MONITOR_ONCE === '1') { if (!healthy) process.exitCode = 1; return; } setInterval(check, intervalMs); })();
