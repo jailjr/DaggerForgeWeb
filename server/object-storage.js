@@ -1,11 +1,9 @@
 const https = require('https');
 
-function request(options, body) { return new Promise((resolve, reject) => { const req = https.request(options, res => { let data = ''; res.on('data', chunk => data += chunk); res.on('end', () => res.statusCode >= 200 && res.statusCode < 300 ? resolve(data) : reject(new Error(`Object storage returned ${res.statusCode}`))); }); req.on('error', reject); req.end(body); }); }
-async function uploadAvatar(filename, bytes, contentType) {
-  const base = process.env.SUPABASE_URL; const key = process.env.SUPABASE_SERVICE_ROLE_KEY; const bucket = process.env.SUPABASE_STORAGE_BUCKET || 'avatars';
-  if (!base || !key) return null;
-  const url = new URL(`/storage/v1/object/${bucket}/${filename}`, base);
-  await request({ hostname: url.hostname, port: url.port || 443, path: `${url.pathname}${url.search}`, method: 'POST', headers: { Authorization: `Bearer ${key}`, apikey: key, 'Content-Type': contentType, 'Content-Length': bytes.length, 'x-upsert': 'true' } }, bytes);
-  return process.env.SUPABASE_STORAGE_PUBLIC === '1' ? `${base.replace(/\/$/, '')}/storage/v1/object/public/${bucket}/${filename}` : `storage://${bucket}/${filename}`;
-}
-module.exports = { uploadAvatar };
+function request(options, body) { return new Promise((resolve, reject) => { const req = https.request(options, res => { let data = ''; res.on('data', chunk => data += chunk); res.on('end', () => res.statusCode >= 200 && res.statusCode < 300 ? resolve(data) : reject(new Error(`Object storage returned ${res.statusCode}: ${data.slice(0, 200)}`))); }); req.on('error', reject); req.end(body); }); }
+function config(kind) { const base = process.env.SUPABASE_URL; const key = process.env.SUPABASE_SERVICE_ROLE_KEY; const bucket = kind === 'backup' ? (process.env.SUPABASE_BACKUP_BUCKET || 'backups') : (process.env.SUPABASE_STORAGE_BUCKET || 'avatars'); if (!base || !key) return null; return { base, key, bucket }; }
+async function uploadObject(filename, bytes, contentType, kind) { const cfg = config(kind); if (!cfg) return null; const url = new URL(`/storage/v1/object/${cfg.bucket}/${filename}`, cfg.base); await request({ hostname: url.hostname, port: url.port || 443, path: url.pathname, method: 'POST', headers: { Authorization: `Bearer ${cfg.key}`, apikey: cfg.key, 'Content-Type': contentType, 'Content-Length': bytes.length, 'x-upsert': 'true' } }, bytes); return `storage://${cfg.bucket}/${filename}`; }
+async function signedObjectUrl(reference, expiresIn = 3600) { const match = /^storage:\/\/([^/]+)\/(.+)$/.exec(reference || ''); const cfg = config(match && match[1] === (process.env.SUPABASE_BACKUP_BUCKET || 'backups') ? 'backup' : 'avatar'); if (!cfg || !match || match[1] !== cfg.bucket) return null; const url = new URL(`/storage/v1/object/sign/${cfg.bucket}/${match[2]}`, cfg.base); const body = JSON.stringify({ expiresIn }); const result = await request({ hostname: url.hostname, port: url.port || 443, path: url.pathname, method: 'POST', headers: { Authorization: `Bearer ${cfg.key}`, apikey: cfg.key, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, body); const parsed = JSON.parse(result); return parsed.signedURL ? `${cfg.base.replace(/\/$/, '')}${parsed.signedURL}` : null; }
+async function uploadAvatar(filename, bytes, contentType) { return uploadObject(filename, bytes, contentType, 'avatar'); }
+async function uploadBackup(filename, bytes) { return uploadObject(filename, bytes, 'application/json', 'backup'); }
+module.exports = { uploadAvatar, uploadBackup, signedObjectUrl };
