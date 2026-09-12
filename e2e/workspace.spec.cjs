@@ -22,6 +22,18 @@ test('GM can create a live campaign and open the character workflow', async ({ p
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Create character' }).click();
   await expect(page.getByRole('heading', { name: 'Browser Hero' })).toBeVisible();
+  await page.getByRole('button', { name: 'Sessions', exact: true }).click();
+  await page.getByRole('button', { name: /new session/i }).click();
+  await expect(page.getByRole('dialog', { name: /edit session/i })).toBeVisible();
+  await page.getByLabel('Title').fill('Browser Session');
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 5000 });
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await page.getByRole('button', { name: 'Table View', exact: true }).click();
+  await expect(page.getByText('Browser Session', { exact: true }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'GM Library', exact: true }).click();
+  await expect(page.getByLabel('Filter by source')).toBeVisible();
+  await page.getByLabel('Filter by source').selectOption('daggerforge');
+  await expect(page.getByText(/Daggerforge/i).first()).toBeVisible();
 });
 });
 
