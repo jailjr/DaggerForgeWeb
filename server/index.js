@@ -1,4 +1,5 @@
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -26,9 +27,11 @@ const dataDir = path.join(process.cwd(), 'data');
 const dbFile = path.join(dataDir, 'campaigns.json');
 const avatarDir = path.join(dataDir, 'avatars');
 const backupDir = path.join(dataDir, 'backups');
+const logDir = path.join(dataDir, 'logs');
 fs.mkdirSync(dataDir, { recursive: true });
 fs.mkdirSync(avatarDir, { recursive: true });
 fs.mkdirSync(backupDir, { recursive: true });
+fs.mkdirSync(logDir, { recursive: true });
 
 function load() {
   if (!fs.existsSync(dbFile)) return { campaigns: {}, participants: {}, events: [] };
@@ -36,7 +39,8 @@ function load() {
 }
 let db = load(); db.sessions = db.sessions || {};
 const postgres = createPostgresStore();
-const metrics = { requests: 0, errors: 0, backups: 0, startedAt: Date.now() };
+const metrics = { requests: 0, errors: 0, backups: 0, startedAt: Date.now(), responses: {} };
+function structuredLog(level, event, fields = {}) { const record = { timestamp: now(), level, event, ...fields }; try { fs.appendFileSync(path.join(logDir, 'api.jsonl'), JSON.stringify(record) + '\n'); } catch {} const webhook = process.env.LOG_AGGREGATION_WEBHOOK; if (webhook && (level === 'error' || level === 'security')) { try { const url = new URL(webhook); const body = JSON.stringify(record); const request = https.request(url, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } }, response => response.resume()); request.on('error', () => {}); request.end(body); } catch {} } if (level === 'error' || level === 'security') console.error(JSON.stringify(record)); }
 function save() { if (!postgres || process.env.WRITE_LOCAL_MIRROR === '1') { const tmp = `${dbFile}.tmp`; fs.writeFileSync(tmp, JSON.stringify(db, null, 2)); fs.renameSync(tmp, dbFile); } if (postgres) postgres.persist(db).catch(error => console.error(`Postgres persistence failed: ${error.message}`)); }
 async function backupSnapshot(campaignId) { const stamp = new Date().toISOString().replace(/[:.]/g, '-'); const campaigns = Object.values(db.campaigns).filter(campaign => !campaignId || campaign.id === campaignId).map(campaign => { const copy = clone(campaign); delete copy.gmTokenHash; delete copy.playerTokenHash; return copy; }); const participants = Object.values(db.participants).filter(participant => !campaignId || participant.campaignId === campaignId).map(participant => { const copy = { ...participant }; delete copy.tokenHash; return copy; }); const snapshot = campaignId ? { schemaVersion: 1, exportedAt: now(), campaign: campaigns[0] || null, participants } : { schemaVersion: 1, exportedAt: now(), campaigns, participants }; const payload = Buffer.from(JSON.stringify(snapshot, null, 2)); const filename = `daggerforge-${stamp}.json`; const target = path.join(backupDir, filename); fs.writeFileSync(target, payload); const remote = await uploadBackup(filename, payload); const retention = Math.max(1, Number(process.env.BACKUP_RETENTION || 14)); const files = fs.readdirSync(backupDir).filter(name => name.endsWith('.json')).sort().reverse(); files.slice(retention).forEach(name => fs.unlinkSync(path.join(backupDir, name))); metrics.backups += 1; return { file: target, remote: remote || null, campaigns: campaigns.length, createdAt: snapshot.exportedAt, name: filename }; }
 function id() { return crypto.randomUUID(); }
@@ -53,7 +57,7 @@ function sessionActor(req, campaignId) { const sessionId = cookies(req).df_sessi
 function findAccess(campaign, raw) { if (!raw) return null; const digest = hash(raw); if (digest === campaign.gmTokenHash) return { role: 'GM', id: 'gm' }; if (digest === campaign.playerTokenHash) return { role: 'JOIN', id: 'join' }; const participant = Object.values(db.participants).find(p => p.campaignId === campaign.id && p.tokenHash === digest && !p.revoked); return participant ? { role: 'PLAYER', id: participant.id } : null; }
 const streams = new Map();
 const attempts = new Map();
-function rateLimited(key) { const current = attempts.get(key) || { count: 0, started: Date.now() }; if (Date.now() - current.started > 60_000) { attempts.set(key, { count: 1, started: Date.now() }); return false; } current.count += 1; attempts.set(key, current); return current.count > 60; }
+function rateLimited(key, max = Number(process.env.RATE_LIMIT_MAX || 120), windowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000)) { const current = attempts.get(key) || { count: 0, started: Date.now() }; if (Date.now() - current.started > windowMs) { attempts.set(key, { count: 1, started: Date.now() }); return false; } current.count += 1; attempts.set(key, current); if (attempts.size > 10_000) for (const [entryKey, entry] of attempts) if (Date.now() - entry.started > windowMs) attempts.delete(entryKey); return current.count > max; }
 function publish(campaignId, event) { const listeners = streams.get(campaignId) || []; listeners.forEach(listener => { if (listener.role === 'PLAYER' && event.entityType === 'character' && event.field === 'state' && event.newValue && Object.prototype.hasOwnProperty.call(event.newValue, 'privateNotes')) return; const safe = listener.role === 'PLAYER' ? { ...event, previousValue: undefined, newValue: event.entityType === 'character' ? { changed: true } : event.newValue } : event; listener.res.write(`data: ${JSON.stringify(safe)}\n\n`); }); }
 function audit(campaign, actor, operation, entityType, entityId, field, before, after) { const event = { id: id(), campaignId: campaign.id, actorId: actor.id, actorRole: actor.role, operation, entityType, entityId, field, previousValue: before, newValue: after, createdAt: now() }; db.events.unshift(event); publish(campaign.id, event); }
 function validateCharacterChanges(character, changes) { const numeric = [['hp', 0, Number(character.hpMax || 0)], ['hpMax', 1, 24], ['hope', 0, 6], ['stress', 0, 6], ['armor', 0, 12], ['level', 1, 10]]; for (const [key, min, max] of numeric) if (Object.prototype.hasOwnProperty.call(changes, key) && (!Number.isInteger(Number(changes[key])) || Number(changes[key]) < min || Number(changes[key]) > max)) return `${key} must be an integer between ${min} and ${max}.`; if (Object.prototype.hasOwnProperty.call(changes, 'hpMax') && Number(changes.hpMax) < Number(character.hp || 0)) return 'HP maximum cannot be lower than current HP.'; return null; }
@@ -66,7 +70,7 @@ async function route(req, res) {
   const parts = url.pathname.split('/').filter(Boolean);
   try {
     if (req.method === 'GET' && url.pathname === '/health') { let persistence = { provider: 'local-json', ok: true }; if (postgres) { try { persistence = await postgres.health(); } catch (error) { persistence = { provider: 'postgres', ok: false, error: error.message }; } } return json(res, persistence.ok ? 200 : 503, { ok: persistence.ok, time: now(), uptimeSeconds: Math.floor((Date.now() - metrics.startedAt) / 1000), persistence, backups: fs.readdirSync(backupDir).filter(name => name.endsWith('.json')).length }); }
-    if (req.method === 'GET' && url.pathname === '/metrics') { const body = [`daggerforge_requests_total ${metrics.requests}`, `daggerforge_errors_total ${metrics.errors}`, `daggerforge_backups_total ${metrics.backups}`, `daggerforge_uptime_seconds ${Math.floor((Date.now() - metrics.startedAt) / 1000)}`].join('\n') + '\n'; res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4', 'cache-control': 'no-store' }); return res.end(body); }
+    if (req.method === 'GET' && url.pathname === '/metrics') { const responseLines = Object.entries(metrics.responses).map(([status, count]) => `daggerforge_responses_total{status="${status}"} ${count}`); const body = [`daggerforge_requests_total ${metrics.requests}`, `daggerforge_errors_total ${metrics.errors}`, `daggerforge_backups_total ${metrics.backups}`, `daggerforge_uptime_seconds ${Math.floor((Date.now() - metrics.startedAt) / 1000)}`, ...responseLines].join('\n') + '\n'; res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4', 'cache-control': 'no-store' }); return res.end(body); }
     if (req.method === 'POST' && url.pathname === '/api/campaigns') {
       const body = await readBody(req); const gmToken = token(); const playerToken = token(); const campaign = { id: id(), name: String(body.name || 'Untitled Campaign').slice(0, 120), mode: 'PREPARATION', joinEnabled: true, gmTokenHash: hash(gmToken), playerTokenHash: hash(playerToken), createdAt: now(), characters: {}, gmLibrary: { adversaries: [], environments: [], items: [], encounters: [] }, encounterTemplates: [] };
       db.campaigns[campaign.id] = campaign; save(); return json(res, 201, { campaign: { id: campaign.id, name: campaign.name, mode: campaign.mode }, gmToken, playerToken });
@@ -83,7 +87,7 @@ async function route(req, res) {
     }
     if (parts[0] !== 'api' || parts[1] !== 'campaigns' || !parts[2]) return error(res, 404, 'Not found');
     const campaign = db.campaigns[parts[2]]; if (!campaign) return error(res, 404, 'Not found');
-    const actor = findAccess(campaign, bearer(req)) || sessionActor(req, campaign.id); if (!actor || (actor.role === 'JOIN' && !(req.method === 'POST' && parts[3] === 'join'))) return error(res, 404, 'Not found');
+    const actor = findAccess(campaign, bearer(req)) || sessionActor(req, campaign.id); if (!actor || (actor.role === 'JOIN' && !(req.method === 'POST' && parts[3] === 'join'))) { structuredLog('security', 'authorization_denied', { method: req.method, path: url.pathname, campaignId: campaign.id }); return error(res, 404, 'Not found'); }
     if (campaign.archivedAt && !(req.method === 'GET' || req.method === 'DELETE' || parts[3] === 'export')) return error(res, 410, 'Campaign is archived.');
     if (req.method === 'GET' && parts.length === 3) return json(res, 200, view(campaign, actor));
     if (req.method === 'POST' && parts[3] === 'backup') { if (actor.role !== 'GM') return error(res, 404, 'Not found'); return json(res, 201, await backupSnapshot(campaign.id)); }
@@ -134,7 +138,7 @@ async function route(req, res) {
       const target = db.events.find(e => e.id === parts[4] && e.campaignId === campaign.id); if (!target || target.entityType !== 'character' || target.operation !== 'character.update') return error(res, 404, 'Not found'); if (actor.role !== 'GM' && target.actorId !== actor.id) return error(res, 403, 'You can only undo your own actions.'); const character = campaign.characters[target.entityId]; if (!character || !target.previousValue || !target.newValue) return error(res, 409, 'This action cannot be undone.'); for (const [key, value] of Object.entries(target.newValue)) if (JSON.stringify(character[key]) !== JSON.stringify(value)) return error(res, 409, 'Conflict: this character changed after the original action.'); const before = {}; for (const [key, value] of Object.entries(target.previousValue)) { before[key] = character[key]; character[key] = value; } character.version += 1; audit(campaign, actor, 'undo', 'character', character.id, 'state', before, target.previousValue); save(); return json(res, 200, publicCharacter(character, actor.role === 'GM' || character.ownerId === actor.id));
     }
     return error(res, 404, 'Not found');
-  } catch (e) { return error(res, e.message === 'Invalid JSON' ? 400 : 500, e.message === 'Invalid JSON' ? e.message : 'Internal server error'); }
+  } catch (e) { metrics.errors += 1; structuredLog('error', 'request_failed', { method: req.method, path: url.pathname, error: e.message }); return error(res, e.message === 'Invalid JSON' ? 400 : 500, e.message === 'Invalid JSON' ? e.message : 'Internal server error'); }
 }
 
 function serveStatic(req, res) {
@@ -152,6 +156,7 @@ function serveStatic(req, res) {
 }
 const server = http.createServer((req, res) => {
   metrics.requests += 1;
+  const requestId = crypto.randomUUID(); res.setHeader('x-request-id', requestId); res.on('finish', () => { const status = String(res.statusCode); metrics.responses[status] = (metrics.responses[status] || 0) + 1; if (res.statusCode >= 500) metrics.errors += 1; });
   res.setHeader('access-control-allow-origin', process.env.CORS_ORIGIN || 'http://127.0.0.1:5173');
   res.setHeader('access-control-allow-credentials', 'true');
   res.setHeader('access-control-allow-headers', 'authorization,content-type');
@@ -159,7 +164,7 @@ const server = http.createServer((req, res) => {
   res.setHeader('x-content-type-options', 'nosniff');
   res.setHeader('referrer-policy', 'no-referrer');
   if (req.method === 'OPTIONS') return res.end();
-  if (rateLimited(req.socket.remoteAddress || 'unknown')) return error(res, 429, 'Too many requests. Try again shortly.');
+  const clientIp = process.env.TRUST_PROXY === '1' ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'unknown' : req.socket.remoteAddress || 'unknown'; const routeKey = String(req.url || '').split('?')[0]; const authRoute = routeKey === '/api/session' || routeKey === '/api/campaigns' || routeKey.endsWith('/join'); const limit = authRoute ? Number(process.env.RATE_LIMIT_AUTH_MAX || 20) : Number(process.env.RATE_LIMIT_MAX || 120); if (rateLimited(`${clientIp}:${routeKey}`, limit)) { res.setHeader('retry-after', '60'); structuredLog('security', 'rate_limit_exceeded', { clientIp, route: routeKey, method: req.method }); return error(res, 429, 'Too many requests. Try again shortly.'); }
   if (serveStatic(req, res)) return;
   route(req, res);
 });
