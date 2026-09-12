@@ -24,6 +24,8 @@ function readBody(req) { return new Promise((resolve, reject) => { let raw = '';
 function bearer(req) { const value = req.headers.authorization || ''; return value.startsWith('Bearer ') ? value.slice(7) : ''; }
 function findAccess(campaign, raw) { if (!raw) return null; const digest = hash(raw); if (digest === campaign.gmTokenHash) return { role: 'GM', id: 'gm' }; if (digest === campaign.playerTokenHash) return { role: 'JOIN', id: 'join' }; const participant = Object.values(db.participants).find(p => p.campaignId === campaign.id && p.tokenHash === digest && !p.revoked); return participant ? { role: 'PLAYER', id: participant.id } : null; }
 const streams = new Map();
+const attempts = new Map();
+function rateLimited(key) { const current = attempts.get(key) || { count: 0, started: Date.now() }; if (Date.now() - current.started > 60_000) { attempts.set(key, { count: 1, started: Date.now() }); return false; } current.count += 1; attempts.set(key, current); return current.count > 60; }
 function publish(campaignId, event) { const listeners = streams.get(campaignId) || []; const line = `data: ${JSON.stringify(event)}\n\n`; listeners.forEach(res => res.write(line)); }
 function audit(campaign, actor, operation, entityType, entityId, field, before, after) { const event = { id: id(), campaignId: campaign.id, actorId: actor.id, actorRole: actor.role, operation, entityType, entityId, field, previousValue: before, newValue: after, createdAt: now() }; db.events.unshift(event); publish(campaign.id, event); }
 function publicCharacter(c, includePrivate) { const copy = { ...c }; if (!includePrivate) delete copy.privateNotes; return copy; }
@@ -37,6 +39,13 @@ async function route(req, res) {
     if (req.method === 'POST' && url.pathname === '/api/campaigns') {
       const body = await readBody(req); const gmToken = token(); const playerToken = token(); const campaign = { id: id(), name: String(body.name || 'Untitled Campaign').slice(0, 120), mode: 'PREPARATION', joinEnabled: true, gmTokenHash: hash(gmToken), playerTokenHash: hash(playerToken), createdAt: now(), characters: {}, gmLibrary: { adversaries: [], environments: [], items: [], encounters: [] } };
       db.campaigns[campaign.id] = campaign; save(); return json(res, 201, { campaign: { id: campaign.id, name: campaign.name, mode: campaign.mode }, gmToken, playerToken });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/campaigns/import') {
+      const body = await readBody(req); const source = body && body.campaign; if (!source || body.schemaVersion !== 1) return error(res, 400, 'Unsupported export format.');
+      const gmToken = token(); const playerToken = token(); const campaign = { id: id(), name: String(source.name || 'Imported Campaign').slice(0, 120), mode: source.mode === 'PLAY' ? 'PLAY' : 'PREPARATION', joinEnabled: source.joinEnabled !== false, gmTokenHash: hash(gmToken), playerTokenHash: hash(playerToken), createdAt: now(), characters: {}, gmLibrary: source.gmLibrary && typeof source.gmLibrary === 'object' ? source.gmLibrary : { adversaries: [], environments: [], items: [], encounters: [] } };
+      const sourceCharacters = source.characters && typeof source.characters === 'object' ? source.characters : {};
+      Object.values(sourceCharacters).slice(0, 100).forEach(raw => { const character = raw && typeof raw === 'object' ? raw : {}; const characterId = id(); campaign.characters[characterId] = { id: characterId, name: String(character.name || 'Imported Character').slice(0, 120), className: String(character.className || ''), ancestry: String(character.ancestry || ''), color: String(character.color || '#a88be3'), initials: String(character.initials || 'PC').slice(0, 4), hp: Number.isFinite(character.hp) ? character.hp : 0, hpMax: Number.isFinite(character.hpMax) ? character.hpMax : 6, hope: Number.isFinite(character.hope) ? character.hope : 0, stress: Number.isFinite(character.stress) ? character.stress : 0, armor: Number.isFinite(character.armor) ? character.armor : 0, level: Number.isFinite(character.level) ? character.level : 1, complete: character.complete === true, ownerId: null, inventory: Array.isArray(character.inventory) ? character.inventory.slice(0, 50).map(String) : [], privateNotes: '', version: 1 }; });
+      db.campaigns[campaign.id] = campaign; save(); return json(res, 201, { campaign: { id: campaign.id, name: campaign.name, mode: campaign.mode }, gmToken, playerToken, importedCharacters: Object.keys(campaign.characters).length });
     }
     if (parts[0] !== 'api' || parts[1] !== 'campaigns' || !parts[2]) return error(res, 404, 'Not found');
     const campaign = db.campaigns[parts[2]]; if (!campaign) return error(res, 404, 'Not found');
@@ -64,5 +73,27 @@ async function route(req, res) {
   } catch (e) { return error(res, e.message === 'Invalid JSON' ? 400 : 500, e.message === 'Invalid JSON' ? e.message : 'Internal server error'); }
 }
 
-const server = http.createServer((req, res) => route(req, res));
+function serveStatic(req, res) {
+  if (process.env.SERVE_STATIC !== '1' || req.method !== 'GET') return false;
+  const requested = new URL(req.url, 'http://localhost').pathname;
+  const relative = requested === '/' ? 'index.html' : requested.replace(/^\/+/, '');
+  const target = path.resolve(process.cwd(), 'dist', relative);
+  const distRoot = path.resolve(process.cwd(), 'dist');
+  const safeTarget = target.startsWith(distRoot) ? target : path.join(distRoot, 'index.html');
+  const finalTarget = fs.existsSync(safeTarget) && fs.statSync(safeTarget).isFile() ? safeTarget : path.join(distRoot, 'index.html');
+  if (!fs.existsSync(finalTarget)) return false;
+  const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml' };
+  res.writeHead(200, { 'content-type': types[path.extname(finalTarget)] || 'application/octet-stream', 'cache-control': relative === 'index.html' ? 'no-cache' : 'public, max-age=31536000, immutable' }); res.end(fs.readFileSync(finalTarget)); return true;
+}
+const server = http.createServer((req, res) => {
+  res.setHeader('access-control-allow-origin', process.env.CORS_ORIGIN || 'http://127.0.0.1:5173');
+  res.setHeader('access-control-allow-headers', 'authorization,content-type');
+  res.setHeader('access-control-allow-methods', 'GET,POST,PATCH,OPTIONS');
+  res.setHeader('x-content-type-options', 'nosniff');
+  res.setHeader('referrer-policy', 'no-referrer');
+  if (req.method === 'OPTIONS') return res.end();
+  if (rateLimited(req.socket.remoteAddress || 'unknown')) return error(res, 429, 'Too many requests. Try again shortly.');
+  if (serveStatic(req, res)) return;
+  route(req, res);
+});
 server.listen(port, '127.0.0.1', () => console.log(`DaggerForge API listening on http://127.0.0.1:${port}`));
