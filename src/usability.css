@@ -11,3 +11,6 @@
 .modal{max-height:calc(100vh - 24px);overflow:auto}
 .narrative-answers,.narrative-sheet{display:grid;gap:12px}.prompt-group{display:grid;gap:9px;padding-top:6px}.prompt-group>.section-label{margin-top:5px}.prompt-answer{border-top:1px solid var(--line);padding-top:9px}.prompt-answer b{font-size:11px}.prompt-answer p{font-size:11px;line-height:1.5;color:var(--muted);margin:5px 0 0}
 @media(max-width:760px){.table-session-context{align-items:flex-start;flex-wrap:wrap}.table-session-actions{width:100%;justify-content:flex-end}.feature-row .config-grid{grid-template-columns:1fr}}
+.redundant-traits{display:none}
+.avatar img{width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block}
+.avatar-upload input:disabled{display:none}
