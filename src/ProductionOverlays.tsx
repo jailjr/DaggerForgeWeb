@@ -70,19 +70,20 @@ export function OverflowMenu({ label = 'More actions', actions }: { label?: stri
 }
 
 export function InventoryDialog({ items, disabled, onClose, onSave }: { items: string[]; disabled?: boolean; onClose: () => void; onSave: (items: string[]) => Promise<void> | void }) {
-  const [value, setValue] = useState(items.join('\n'));
+  const [rows, setRows] = useState(items);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const save = async () => {
-    const normalized = value.split('\n').map(item => item.trim()).filter(Boolean);
+    const normalized = rows.map(item => item.trim()).filter(Boolean);
     if (normalized.some(item => item.length > 160)) return setError('Each inventory item must be 160 characters or fewer.');
     if (normalized.length > 50) return setError('A character may have at most 50 inventory entries.');
     setError(''); setBusy(true);
     try { await onSave(normalized); onClose(); } catch (event) { setError(event instanceof Error ? event.message : 'Unable to save inventory.'); } finally { setBusy(false); }
   };
   return <Modal title="Manage inventory" eyebrow="CHARACTER INVENTORY" onClose={onClose} className="inventory-modal">
-    <p className="muted-copy">One item per line. Items remain part of the character runtime state and can be changed by the player during play.</p>
-    <label className="form-label">Inventory<textarea autoFocus className="form-input config-textarea" disabled={disabled || busy} value={value} onChange={event => setValue(event.target.value)} aria-describedby={error ? 'inventory-error' : undefined} /></label>
+    <p className="muted-copy">Inventory is stored as named entries. Add or remove entries here; quantities are not part of the current character model.</p>
+    <div className="inventory-editor-list">{rows.map((item, index) => <div className="repeatable-row" key={index}><input className="form-input" autoFocus={index === 0} disabled={disabled || busy} aria-label={'Inventory item ' + (index + 1)} value={item} placeholder="Item name" onChange={event => setRows(current => current.map((row, rowIndex) => rowIndex === index ? event.target.value : row))} /><button className="icon-button" disabled={disabled || busy} aria-label={'Remove inventory item ' + (index + 1)} onClick={() => setRows(current => current.filter((_, rowIndex) => rowIndex !== index))}>×</button></div>)}</div>
+    <button className="text-button" disabled={disabled || busy || rows.length >= 50} onClick={() => setRows(current => [...current, ''])}>Add item</button>
     {error && <div id="inventory-error" className="form-error" role="alert">{error}</div>}
     <div className="modal-actions"><button className="button secondary" onClick={onClose} disabled={busy}>Cancel</button><button className="button primary" onClick={save} disabled={disabled || busy}>{busy ? 'Saving…' : 'Save inventory'}</button></div>
   </Modal>;

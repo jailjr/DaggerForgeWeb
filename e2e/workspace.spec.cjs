@@ -18,7 +18,7 @@ test('GM can create a live campaign and open the character workflow', async ({ p
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Create character' }).click();
-  await expect(page.getByText('Browser Hero')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Browser Hero' })).toBeVisible();
 });
 });
 
