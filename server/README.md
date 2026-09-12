@@ -1,5 +1,5 @@
 # Local API
 
-Run with `node server/index.js`. The API uses a transactional temp-file rename for the local demo store at `data/campaigns.json`; `data/` is ignored by Git. It exposes campaign creation, participant join, campaign-scoped views, GM-only audit events, character claims, versioned updates, mode changes, and Server-Sent Events.
+Run with `node server/index.js`. The API uses a transactional temp-file rename for the local demo store at `data/campaigns.json`; `data/` is ignored by Git. It exposes campaign creation, player-token participant joins, campaign-scoped views, GM-only audit events, character claims, versioned updates, mode changes, player-access regeneration/revocation, secret-free export, and Server-Sent Events.
 
 This file-backed adapter is suitable for local development and smoke testing. For production, replace the repository functions with Postgres transactions and store only token hashes. The authorization and response-shaping rules in this adapter are the required behavior: unauthorized resources return 404 where possible, player projections exclude GM library/private notes, and character updates require an expected version.

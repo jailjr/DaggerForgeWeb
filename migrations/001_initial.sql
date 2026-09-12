@@ -5,6 +5,7 @@ create table campaigns (
   mode varchar(20) not null check (mode in ('PREPARATION','PLAY')),
   join_enabled boolean not null default true,
   gm_token_hash char(64) not null unique,
+  player_token_hash char(64) not null unique,
   created_at timestamptz not null default now(),
   archived_at timestamptz
 );
