@@ -14,7 +14,7 @@ function load() {
   if (!fs.existsSync(dbFile)) return { campaigns: {}, participants: {}, events: [] };
   try { return JSON.parse(fs.readFileSync(dbFile, 'utf8')); } catch { return { campaigns: {}, participants: {}, events: [] }; }
 }
-let db = load();
+let db = load(); db.sessions = db.sessions || {};
 function save() { const tmp = `${dbFile}.tmp`; fs.writeFileSync(tmp, JSON.stringify(db, null, 2)); fs.renameSync(tmp, dbFile); }
 function id() { return crypto.randomUUID(); }
 function token() { return crypto.randomBytes(32).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
@@ -24,6 +24,9 @@ function json(res, status, value) { const body = JSON.stringify(value); res.writ
 function error(res, status, message) { json(res, status, { error: message }); }
 function readBody(req) { return new Promise((resolve, reject) => { let raw = ''; req.on('data', chunk => { raw += chunk; if (raw.length > 1_000_000) req.destroy(); }); req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error('Invalid JSON')); } }); req.on('error', reject); }); }
 function bearer(req) { const value = req.headers.authorization || ''; return value.startsWith('Bearer ') ? value.slice(7) : ''; }
+function cookies(req) { return Object.fromEntries(String(req.headers.cookie || '').split(';').map(x => x.trim().split('=').map(decodeURIComponent)).filter(x => x.length === 2)); }
+function cookieHeader(value, maxAge) { return `df_session=${encodeURIComponent(value)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`; }
+function sessionActor(req, campaignId) { const sessionId = cookies(req).df_session; const session = sessionId && db.sessions[hash(sessionId)]; if (!session || session.expiresAt < Date.now() || session.campaignId !== campaignId) return null; return { role: session.role, id: session.actorId }; }
 function findAccess(campaign, raw) { if (!raw) return null; const digest = hash(raw); if (digest === campaign.gmTokenHash) return { role: 'GM', id: 'gm' }; if (digest === campaign.playerTokenHash) return { role: 'JOIN', id: 'join' }; const participant = Object.values(db.participants).find(p => p.campaignId === campaign.id && p.tokenHash === digest && !p.revoked); return participant ? { role: 'PLAYER', id: participant.id } : null; }
 const streams = new Map();
 const attempts = new Map();
@@ -44,6 +47,8 @@ async function route(req, res) {
       const body = await readBody(req); const gmToken = token(); const playerToken = token(); const campaign = { id: id(), name: String(body.name || 'Untitled Campaign').slice(0, 120), mode: 'PREPARATION', joinEnabled: true, gmTokenHash: hash(gmToken), playerTokenHash: hash(playerToken), createdAt: now(), characters: {}, gmLibrary: { adversaries: [], environments: [], items: [], encounters: [] } };
       db.campaigns[campaign.id] = campaign; save(); return json(res, 201, { campaign: { id: campaign.id, name: campaign.name, mode: campaign.mode }, gmToken, playerToken });
     }
+    if (req.method === 'POST' && url.pathname === '/api/session') { const body = await readBody(req); const campaign = db.campaigns[body.campaignId]; const actor = campaign && findAccess(campaign, String(body.accessToken || '')); if (!campaign || !actor || actor.role === 'JOIN') return error(res, 401, 'Invalid access credentials.'); const sessionId = token(); db.sessions[hash(sessionId)] = { campaignId: campaign.id, actorId: actor.id, role: actor.role, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 }; save(); res.setHeader('set-cookie', cookieHeader(sessionId, 30 * 24 * 60 * 60)); return json(res, 200, { ok: true, role: actor.role, campaignId: campaign.id }); }
+    if (req.method === 'POST' && url.pathname === '/api/session/logout') { const sessionId = cookies(req).df_session; if (sessionId) delete db.sessions[hash(sessionId)]; save(); res.setHeader('set-cookie', cookieHeader('', 0)); return json(res, 200, { ok: true }); }
     if (req.method === 'POST' && url.pathname === '/api/campaigns/import') {
       const body = await readBody(req); const source = body && body.campaign; if (!source || body.schemaVersion !== 1) return error(res, 400, 'Unsupported export format.');
       const gmToken = token(); const playerToken = token(); const campaign = { id: id(), name: String(source.name || 'Imported Campaign').slice(0, 120), mode: source.mode === 'PLAY' ? 'PLAY' : 'PREPARATION', joinEnabled: source.joinEnabled !== false, gmTokenHash: hash(gmToken), playerTokenHash: hash(playerToken), createdAt: now(), characters: {}, gmLibrary: source.gmLibrary && typeof source.gmLibrary === 'object' ? source.gmLibrary : { adversaries: [], environments: [], items: [], encounters: [] } };
@@ -53,7 +58,7 @@ async function route(req, res) {
     }
     if (parts[0] !== 'api' || parts[1] !== 'campaigns' || !parts[2]) return error(res, 404, 'Not found');
     const campaign = db.campaigns[parts[2]]; if (!campaign) return error(res, 404, 'Not found');
-    const actor = findAccess(campaign, bearer(req)); if (!actor) return error(res, 401, 'Unauthorized');
+    const actor = findAccess(campaign, bearer(req)) || sessionActor(req, campaign.id); if (!actor) return error(res, 401, 'Unauthorized');
     if (campaign.archivedAt && !(req.method === 'GET' || req.method === 'DELETE' || parts[3] === 'export')) return error(res, 410, 'Campaign is archived.');
     if (req.method === 'GET' && parts.length === 3) return json(res, 200, view(campaign, actor));
     if (req.method === 'GET' && parts[3] === 'presence') return json(res, 200, { presence: presenceFor(campaign, actor) });
