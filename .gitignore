@@ -6,3 +6,5 @@ dist
 .DS_Store
 .upstream-daggerforge
 data
+test-results
+playwright-report

@@ -10,6 +10,7 @@
     "build": "tsc -b && node node_modules/vite/bin/vite.js build",
     "test": "vitest run",
     "test:e2e": "vitest run server/api.e2e.test.ts",
+    "test:browser": "playwright test",
     "monitor": "node ops/monitor-health.js",
     "preview": "node node_modules/vite/bin/vite.js preview"
   },
@@ -20,12 +21,13 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^2.2.0",
-    "vite": "^3.2.11",
-    "typescript": "^4.9.5",
-    "vitest": "^0.15.2",
-    "jsdom": "^20.0.3",
+    "@playwright/test": "^1.34.3",
     "@types/react": "^18.3.3",
-    "@types/react-dom": "^18.3.0"
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^2.2.0",
+    "jsdom": "^20.0.3",
+    "typescript": "^4.9.5",
+    "vite": "^3.2.11",
+    "vitest": "^0.15.2"
   }
 }

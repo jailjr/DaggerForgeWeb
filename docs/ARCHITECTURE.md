@@ -1,31 +1,37 @@
-# Architecture notes
+# DaggerForge Web architecture
 
-## Current slice
+## Runtime shape
 
-The app is a Vite + React + TypeScript single-page client. `src/main.tsx` owns the seeded demo campaign and renders the GM workspace. `src/styles.css` contains the responsive visual system. The demo is intentionally dependency-light and stores only campaign demo state in localStorage; a BroadcastChannel sends character projection updates to other open tabs without broadcasting private notes.
+The client is a Vite + React + TypeScript single-page application. `server/index.js` serves the production bundle and campaign API from the same HTTPS origin. Local Vite development uses the API on port 8787. `src/content/daggerforge/` contains immutable imported Daggerheart base data; campaign custom content and runtime instances are stored independently.
 
-## Domain boundaries
+## Persistence
 
-`src/content/daggerforge/` is immutable imported base content. It is isolated from campaign/runtime state so an upstream refresh can replace that directory without changing campaign records. Custom records should be stored separately and reference a `source` of `daggerforge` or `custom`.
+With `DATABASE_URL`, the API hydrates and persists normalized campaign, participant, character, session, encounter, library, audit, auth-session, and rate-limit records through `server/postgres-store.js` and versioned SQL migrations. A local JSON store remains a development fallback only. Mutations are campaign-scoped and character writes use row versions for optimistic concurrency.
 
-`src/domain/rules.ts` is the authority seam. The future API must call the same rules server-side; UI disabling is never sufficient authorization.
+Private notes, GM library content, unused adversaries/environments/items, and other hidden fields are removed in the server projection. Player realtime and history payloads use `safeEventForPlayer`; they never rely on the frontend to hide private values. GM presence includes nickname and assignment context, while players receive only a count.
 
-## Required persistence model
+## Domain model
 
-Campaigns, participants, characters, character_runtime, inventories, library_definitions, runtime_instances, encounters, sessions, announcements, audit_events, access_grants, and exports should use UUID primary keys, campaign foreign keys, timestamps, `version` integers, and archive flags. Audit events keep actor ID, nickname snapshot, operation, entity/field, previous/new values, and session ID. Access/security logs remain separate from gameplay history.
+The server character model validates Daggerheart classes, ancestries, communities, traits, experiences, domain cards, equipment, resource ranges, and inventory. Supported derived values are recalculated from authoritative configuration when their source changes. The client locks configuration in PLAY but the server remains authoritative. Temporary effects remain descriptive notes, as required by the product specification; no separate active-effects subsystem is introduced.
 
-## Access and privacy
+Adversaries are copied into independent encounter runtime instances. Their source definition is never mutated. Table View exposes the source-defined Action and Reaction features as auditable GM actions, tracks HP/Fear, and shows environment details. It deliberately does not implement initiative, turns, rounds, or invented conditions.
 
-GM access is a signed private token held in an HttpOnly, Secure, SameSite cookie. Player join uses a campaign grant token, creates a UUID participant, and stores only a participant cookie. Token hashes—not raw tokens—are stored. Rate limit join attempts and revoke grants. Player projections exclude GM Library, GM notes, other full character sheets, and private character notes. Realtime topics are campaign-scoped and field-filtered.
+## Realtime and recovery
 
-## Realtime and concurrency
+Campaign SSE streams carry authorized audit events. The client heartbeats presence every 20 seconds, reconnects with exponential backoff, reauthenticates through the HttpOnly session cookie, resubscribes, and pages through recent history to recover missed events. Small character and encounter updates are applied to the affected entity; unrelated campaign state is not refetched. Conflicts return HTTP 409 and are presented with reload/retry actions.
 
-Use a small WebSocket/SSE service or the database provider's free realtime feature for row-level events. Every mutation carries `expectedVersion`; conflicting writes return `409` with a refreshable conflict state. Undo is a new mutation that checks the current version and never deletes the original event.
+## Audit, backup, and operations
 
-## Deployment
+Meaningful gameplay mutations append audit events containing actor identity snapshot, operation, entity, field, before/after values, and timestamps. Undo is a new concurrency-checked mutation. Export excludes credentials; import always creates a new campaign and remaps participant/character identities. Automatic/manual backups use external object storage when configured, with local files only as a development fallback. `/health` and `/metrics` support external uptime monitoring; Sentry receives server errors/security events when configured.
 
-The static client can deploy to Cloudflare Pages or GitHub Pages with HTTPS and GitHub Actions. A production API/database can use a free Supabase/Neon project with provider backups and a versioned migration directory. No deployment was claimed here because no provider credentials were available in the workspace. Before launch, configure secrets, run migrations, enable backups, and add a smoke test to the deployment job.
+## Deployment and limitations
 
-## Deliberate demo limitations
+Render runs the Docker image with Node 20, hosted Postgres, Supabase private object storage, HTTPS, and GitHub Actions. `REQUIRE_PRODUCTION_SERVICES=1` fails fast if required hosted services are absent. Configure provider point-in-time recovery, bucket retention, Render rollback policy, the Render deploy hook, and monitoring secrets as described in [DEPLOYMENT.md](DEPLOYMENT.md). Free-tier limits, sleeping behavior, backup retention, and provider terms remain provider-specific and must not be represented as an unlimited guarantee.
 
-The checked-in demo does not claim production authentication, server-side isolation, cloud object storage, provider backups, or remote deployment. Those are documented seams rather than simulated security. The frontend does include the permission/concurrency primitives and a realistic seeded workflow so the product can be evaluated and extended safely.
+## Testing and maintenance
+
+Vitest covers domain and API behavior. Playwright covers campaign creation, character creation, Help/mobile navigation, and runs in CI against desktop and mobile Chromium. Add new behavior at the server boundary first, update the corresponding browser flow, and keep migrations and this document synchronized with production behavior.
+
+## Attribution and update boundary
+
+The upstream MIT notice is preserved at `src/content/daggerforge/LICENSE`. Base content is refreshed by replacing/importing that directory, never by mutating campaign records. Custom content references its origin and remains in campaign storage so upstream updates do not overwrite GM work.

@@ -7,6 +7,19 @@ const equipment = require('../src/content/daggerforge/srd/equipment.json');
 const traits = ['agility', 'strength', 'finesse', 'instinct', 'presence', 'knowledge'];
 const emptyTraits = () => Object.fromEntries(traits.map(name => [name, { value: '', marked: false }]));
 const cardFor = (name, list) => list.find(item => item.name === name);
+const classNames = new Set(classes.map(item => item.name));
+const ancestryNames = new Set(ancestries.map(item => item.name));
+const communityNames = new Set(communities.map(item => item.name));
+const domainNames = new Set(domains.map(item => item.name));
+const equipmentNames = new Set([...(equipment.weapons || []), ...(equipment.armor || [])].map(item => item.name));
+const subclassFor = (className, subclassName) => {
+  const selectedClass = cardFor(className, classes);
+  return selectedClass?.subclasses?.[subclassName] || null;
+};
+const armorModifiers = armor => {
+  const feature = String(armor?.feature || '');
+  return { evasion: feature.includes('Very Heavy') ? -2 : feature.includes('Heavy') ? -1 : feature.includes('Flexible') ? 1 : feature.includes('Difficult') ? -1 : 0, allTraits: feature.includes('Difficult') ? -1 : 0, agility: feature.includes('Very Heavy') ? -1 : 0 };
+};
 
 function buildCharacterFromChoices(body, id) {
   const selectedClass = cardFor(body.className, classes);
@@ -16,28 +29,43 @@ function buildCharacterFromChoices(body, id) {
   const primary = cardFor(body.primaryWeaponName || selectedClass?.stats?.suggestedPrimary, equipment.weapons || []);
   const secondary = cardFor(body.secondaryWeaponName || selectedClass?.stats?.suggestedSecondary, equipment.weapons || []);
   const experienceNames = Array.isArray(body.experiences) ? body.experiences : [];
-  const domainNames = Array.isArray(body.domainCardNames) ? body.domainCardNames : [];
-  const ancestry = cardFor(body.ancestry, ancestries);
-  const community = cardFor(body.community, communities);
-  const domainCards = domainNames.map(name => cardFor(name, domains)).filter(Boolean).map(card => ({ ...card, inVault: false }));
-  const armorScore = armor?.score ?? 0;
-  const maxHp = selectedClass?.stats?.hp ?? (Number.isFinite(Number(body.hpMax)) ? Number(body.hpMax) : 6);
-  return {
-    id, name: String(body.name || 'New Character').slice(0, 120), className: selectedClass?.name || String(body.className || ''), subclassName: String(body.subclassName || ''), ancestry: ancestry?.name || String(body.ancestry || ''), community: community?.name || String(body.community || ''), color: String(body.color || '#a88be3'), initials: String(body.initials || body.name || 'PC').split(/\s+/).map(x => x[0]).join('').slice(0, 4), level, hp: 0, hpMax: maxHp, hope: 2, stress: 0, armor: armorScore, armorSlots: [], hopeMax: 6, stressMax: 6, evasion: selectedClass?.stats?.evasion ?? null, armorScore, majorThreshold: armor ? armor.minor + level : null, severeThreshold: armor ? armor.major + level : null,
-    traits: Object.fromEntries(traits.map((name, index) => [name, { value: classTraits[index] || '', marked: false }])), experiences: experienceNames.slice(0, 5).map(text => ({ text: String(text).slice(0, 120), modifier: '+2' })), domainCards, ancestryCard: ancestry || null, communityCard: community || null,
-    primaryWeapon: primary ? { name: primary.name, traitRange: `${primary.trait} - ${primary.range}`, damageDice: `${primary.damage} ${primary.damageType === 'Magical' ? 'mag' : 'phy'}`, feature: primary.feature || '' } : null, secondaryWeapon: secondary ? { name: secondary.name, traitRange: `${secondary.trait} - ${secondary.range}`, damageDice: `${secondary.damage} ${secondary.damageType === 'Magical' ? 'mag' : 'phy'}`, feature: secondary.feature || '' } : null,
-    complete: false, ownerId: null, inventory: ["Torch, 50 feet of rope, basic supplies, a Minor Health Potion or Minor Stamina Potion"], privateNotes: '', version: 1
-  };
+  const domainCardNames = Array.isArray(body.domainCardNames) ? body.domainCardNames : [];
+  const ancestry = cardFor(body.ancestry, ancestries); const community = cardFor(body.community, communities);
+  const domainCards = domainCardNames.map(name => { const card = cardFor(name, domains); return card ? { ...card, inVault: false } : { name: String(name) }; });
+  const armorScore = armor?.score ?? 0; const armorAdjustment = armorModifiers(armor); const maxHp = selectedClass?.stats?.hp ?? (Number.isFinite(Number(body.hpMax)) ? Number(body.hpMax) : 6);
+  return { id, name: String(body.name || 'New Character').slice(0, 120), className: selectedClass?.name || String(body.className || ''), subclassName: String(body.subclassName || ''), ancestry: ancestry?.name || String(body.ancestry || ''), community: community?.name || String(body.community || ''), color: String(body.color || '#a88be3'), initials: String(body.initials || body.name || 'PC').split(/\s+/).map(x => x[0]).join('').slice(0, 4), level, hp: 0, hpMax: maxHp, hope: 2, stress: 0, armor: armorScore, armorName: armor?.name || '', armorFeature: armor?.feature || '', armorSlots: [], hopeMax: 6, stressMax: 6, evasion: selectedClass?.stats?.evasion == null ? null : selectedClass.stats.evasion + armorAdjustment.evasion, armorScore, majorThreshold: armor ? armor.minor + level : null, severeThreshold: armor ? armor.major + level : null, traits: Object.fromEntries(traits.map((name, index) => [name, { value: classTraits[index] || '', marked: false }])), experiences: experienceNames.slice(0, 2).map(text => ({ text: String(text).slice(0, 120), modifier: '+2' })), domainCards, ancestryCard: ancestry || null, communityCard: community || null, primaryWeapon: primary ? weaponRecord(primary, 'Primary') : null, secondaryWeapon: secondary ? weaponRecord(secondary, 'Secondary') : null, complete: false, ownerId: null, inventory: [], privateNotes: '', version: 1 };
 }
 
+function weaponRecord(source, slot) { return { sourceId: source.id, name: source.name, traitRange: `${source.trait} - ${source.range}`, damageDice: `${source.damage} ${source.damageType === 'Magical' ? 'mag' : 'phy'}`, burden: source.burden || '', feature: source.feature || '', slot }; }
+
 function validateCharacterModel(character, changes) {
-  const allowedArrays = ['traits', 'experiences', 'domainCards', 'inventory', 'armorSlots'];
-  for (const key of allowedArrays) if (key in changes && !Array.isArray(changes[key]) && key !== 'traits') return `${key} must be an array.`;
-  if ('traits' in changes && (!changes.traits || typeof changes.traits !== 'object' || traits.some(name => !changes.traits[name] || typeof changes.traits[name].value !== 'string'))) return 'Traits must contain all six Daggerheart traits.';
-  if ('experiences' in changes && changes.experiences.length > 20) return 'A character may have at most 20 experience rows.';
-  if ('domainCards' in changes && changes.domainCards.length > 50) return 'A character may have at most 50 domain cards.';
-  if ('level' in changes && (!Number.isInteger(Number(changes.level)) || Number(changes.level) < 1 || Number(changes.level) > 10)) return 'Level must be between 1 and 10.';
+  const merged = { ...character, ...changes }; const requiredText = [['name', 120], ['className', 80], ['ancestry', 80]];
+  for (const [key, max] of requiredText) if (key in changes && (typeof changes[key] !== 'string' || !changes[key].trim() || changes[key].length > max)) return `${key} is required and must be ${max} characters or fewer.`;
+  if ('className' in changes && !classNames.has(changes.className)) return 'Choose a class from the Daggerheart content set.';
+  if ('ancestry' in changes && !ancestryNames.has(changes.ancestry)) return 'Choose an ancestry from the Daggerheart content set.';
+  if ('community' in changes && changes.community && !communityNames.has(changes.community)) return 'Choose a community from the Daggerheart content set.';
+  if (merged.subclassName && !subclassFor(merged.className, merged.subclassName)) return 'Choose a subclass that belongs to the selected class.';
+  if ('armorName' in changes && changes.armorName && !cardFor(changes.armorName, equipment.armor || [])) return 'Choose armor from the Daggerheart equipment set.';
+  const numeric = [['hp', 0, Number(merged.hpMax || 0)], ['hpMax', 1, 24], ['hope', 0, 6], ['stress', 0, 6], ['armor', 0, 12], ['level', 1, 10], ['evasion', 0, 30], ['armorScore', 0, 30], ['majorThreshold', 0, 60], ['severeThreshold', 0, 60]];
+  for (const [key, min, max] of numeric) if (key in changes && changes[key] !== null && (!Number.isInteger(Number(changes[key])) || Number(changes[key]) < min || Number(changes[key]) > max)) return `${key} must be an integer between ${min} and ${max}.`;
+  if (Number(merged.hp) > Number(merged.hpMax)) return 'HP cannot exceed HP maximum.';
+  if ('hpMax' in changes && Number(changes.hpMax) < Number(character.hp || 0)) return 'HP maximum cannot be lower than current HP.';
+  if ('traits' in changes && (!changes.traits || typeof changes.traits !== 'object' || Array.isArray(changes.traits) || traits.some(name => !changes.traits[name] || typeof changes.traits[name].value !== 'string' || !/^[-+]?\d+$/.test(changes.traits[name].value) || Number(changes.traits[name].value) < -3 || Number(changes.traits[name].value) > 3))) return 'Traits must contain all six modifiers from -3 to +3.';
+  if ('experiences' in changes && (!Array.isArray(changes.experiences) || changes.experiences.length > 2 || changes.experiences.some(item => !item || typeof item.text !== 'string' || !item.text.trim() || item.text.length > 120 || typeof item.modifier !== 'string' || !/^[-+]?\d+$/.test(item.modifier)))) return 'Characters may have up to two experiences with text and numeric modifiers.';
+  if ('domainCards' in changes && (!Array.isArray(changes.domainCards) || changes.domainCards.length > 50 || changes.domainCards.some(item => !item || !domainNames.has(typeof item === 'string' ? item : item.name)))) return 'Choose domain cards from the Daggerheart content set.';
+  for (const key of ['primaryWeapon', 'secondaryWeapon']) if (key in changes && changes[key] && (!changes[key].name || (changes[key].sourceId && !equipmentNames.has(changes[key].name)))) return `${key} must reference a known equipment entry.`;
+  if ('inventory' in changes && (!Array.isArray(changes.inventory) || changes.inventory.length > 50 || changes.inventory.some(item => typeof item !== 'string' || !item.trim() || item.length > 160))) return 'Inventory must contain at most 50 named items.';
   return null;
 }
 
-module.exports = { buildCharacterFromChoices, validateCharacterModel };
+function applyDerivedValues(character, changes) {
+  const merged = { ...character, ...changes }; const selectedClass = cardFor(merged.className, classes); const armor = cardFor(merged.armorName, equipment.armor || []); const modifiers = armorModifiers(armor); const next = { ...changes };
+  if ('className' in changes && !('hpMax' in changes) && selectedClass?.stats?.hp !== undefined) next.hpMax = selectedClass.stats.hp;
+  if (('className' in changes || 'armorName' in changes || 'level' in changes) && !('evasion' in changes) && selectedClass?.stats?.evasion !== undefined) next.evasion = selectedClass.stats.evasion + modifiers.evasion;
+  if ('armorName' in changes && armor) { next.armor = armor.score; next.armorScore = armor.score; next.armorFeature = armor.feature || ''; next.majorThreshold = armor.minor + Number(merged.level || 1); next.severeThreshold = armor.major + Number(merged.level || 1); }
+  if ('level' in changes && armor) { next.majorThreshold = armor.minor + Number(changes.level); next.severeThreshold = armor.major + Number(changes.level); }
+  if ('armor' in changes && !('armorScore' in changes) && !('armorName' in changes)) next.armorScore = Number(changes.armor);
+  return next;
+}
+
+module.exports = { buildCharacterFromChoices, validateCharacterModel, applyDerivedValues, emptyTraits };
