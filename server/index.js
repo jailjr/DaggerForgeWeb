@@ -166,6 +166,8 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('referrer-policy', 'no-referrer');
   if (req.method === 'OPTIONS') return res.end();
   const clientIp = process.env.TRUST_PROXY === '1' ? String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || 'unknown' : req.socket.remoteAddress || 'unknown'; const routeKey = String(req.url || '').split('?')[0]; const authRoute = routeKey === '/api/session' || routeKey === '/api/campaigns' || routeKey.endsWith('/join'); const limit = authRoute ? Number(process.env.RATE_LIMIT_AUTH_MAX || 20) : Number(process.env.RATE_LIMIT_MAX || 120); if (await rateLimited(`${clientIp}:${routeKey}`, limit)) { res.setHeader('retry-after', '60'); structuredLog('security', 'rate_limit_exceeded', { clientIp, route: routeKey, method: req.method }); return error(res, 429, 'Too many requests. Try again shortly.'); }
+  const pathname = new URL(req.url, `http://${req.headers.host || 'localhost'}`).pathname;
+  if (pathname === '/health' || pathname === '/metrics' || pathname.startsWith('/api/')) return route(req, res);
   if (serveStatic(req, res)) return;
   route(req, res);
 });
