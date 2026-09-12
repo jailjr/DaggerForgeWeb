@@ -1,0 +1,64 @@
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const port = Number(process.env.PORT || 8787);
+const dataDir = path.join(process.cwd(), 'data');
+const dbFile = path.join(dataDir, 'campaigns.json');
+fs.mkdirSync(dataDir, { recursive: true });
+
+function load() {
+  if (!fs.existsSync(dbFile)) return { campaigns: {}, participants: {}, events: [] };
+  try { return JSON.parse(fs.readFileSync(dbFile, 'utf8')); } catch { return { campaigns: {}, participants: {}, events: [] }; }
+}
+let db = load();
+function save() { const tmp = `${dbFile}.tmp`; fs.writeFileSync(tmp, JSON.stringify(db, null, 2)); fs.renameSync(tmp, dbFile); }
+function id() { return crypto.randomUUID(); }
+function token() { return crypto.randomBytes(32).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
+function hash(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
+function now() { return new Date().toISOString(); }
+function json(res, status, value) { const body = JSON.stringify(value); res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'content-length': Buffer.byteLength(body) }); res.end(body); }
+function error(res, status, message) { json(res, status, { error: message }); }
+function readBody(req) { return new Promise((resolve, reject) => { let raw = ''; req.on('data', chunk => { raw += chunk; if (raw.length > 1_000_000) req.destroy(); }); req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error('Invalid JSON')); } }); req.on('error', reject); }); }
+function bearer(req) { const value = req.headers.authorization || ''; return value.startsWith('Bearer ') ? value.slice(7) : ''; }
+function findAccess(campaign, raw) { if (!raw) return null; const digest = hash(raw); if (digest === campaign.gmTokenHash) return { role: 'GM', id: 'gm' }; const participant = Object.values(db.participants).find(p => p.campaignId === campaign.id && p.tokenHash === digest && !p.revoked); return participant ? { role: 'PLAYER', id: participant.id } : null; }
+const streams = new Map();
+function publish(campaignId, event) { const listeners = streams.get(campaignId) || []; const line = `data: ${JSON.stringify(event)}\n\n`; listeners.forEach(res => res.write(line)); }
+function audit(campaign, actor, operation, entityType, entityId, field, before, after) { const event = { id: id(), campaignId: campaign.id, actorId: actor.id, actorRole: actor.role, operation, entityType, entityId, field, previousValue: before, newValue: after, createdAt: now() }; db.events.unshift(event); publish(campaign.id, event); }
+function publicCharacter(c, includePrivate) { const copy = { ...c }; if (!includePrivate) delete copy.privateNotes; return copy; }
+function view(campaign, actor) { const chars = Object.values(campaign.characters).map(c => publicCharacter(c, actor.role === 'GM' || c.ownerId === actor.id)); const out = { id: campaign.id, name: campaign.name, mode: campaign.mode, joinEnabled: campaign.joinEnabled, characters: chars }; if (actor.role === 'GM') { out.gmLibrary = campaign.gmLibrary; out.events = db.events.filter(e => e.campaignId === campaign.id).slice(0, 100); } return out; }
+
+async function route(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const parts = url.pathname.split('/').filter(Boolean);
+  try {
+    if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, time: now() });
+    if (req.method === 'POST' && url.pathname === '/api/campaigns') {
+      const body = await readBody(req); const gmToken = token(); const playerToken = token(); const campaign = { id: id(), name: String(body.name || 'Untitled Campaign').slice(0, 120), mode: 'PREPARATION', joinEnabled: true, gmTokenHash: hash(gmToken), createdAt: now(), characters: {}, gmLibrary: { adversaries: [], environments: [], items: [], encounters: [] } };
+      db.campaigns[campaign.id] = campaign; save(); return json(res, 201, { campaign: { id: campaign.id, name: campaign.name, mode: campaign.mode }, gmToken, playerToken });
+    }
+    if (parts[0] !== 'api' || parts[1] !== 'campaigns' || !parts[2]) return error(res, 404, 'Not found');
+    const campaign = db.campaigns[parts[2]]; if (!campaign) return error(res, 404, 'Not found');
+    const actor = findAccess(campaign, bearer(req)); if (!actor) return error(res, 401, 'Unauthorized');
+    if (req.method === 'GET' && parts.length === 3) return json(res, 200, view(campaign, actor));
+    if (req.method === 'GET' && parts[3] === 'events') { if (actor.role !== 'GM') return error(res, 404, 'Not found'); return json(res, 200, { events: db.events.filter(e => e.campaignId === campaign.id).slice(0, 200) }); }
+    if (req.method === 'GET' && parts[3] === 'stream') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' }); res.write(`data: ${JSON.stringify({ type: 'connected' })}\n\n`); const list = streams.get(campaign.id) || []; list.push(res); streams.set(campaign.id, list); req.on('close', () => streams.set(campaign.id, (streams.get(campaign.id) || []).filter(x => x !== res))); return;
+    }
+    if (req.method === 'POST' && parts[3] === 'join') {
+      if (!campaign.joinEnabled) return error(res, 403, 'New player joins are disabled.'); const body = await readBody(req); const participantToken = token(); const participant = { id: id(), campaignId: campaign.id, nickname: String(body.nickname || 'Player').slice(0, 60), tokenHash: hash(participantToken), revoked: false, characterId: null, createdAt: now() }; db.participants[participant.id] = participant; save(); return json(res, 201, { participant: { id: participant.id, nickname: participant.nickname }, participantToken, campaign: view(campaign, { role: 'PLAYER', id: participant.id }) });
+    }
+    if (req.method === 'POST' && parts[3] === 'mode') { if (actor.role !== 'GM') return error(res, 403, 'GM access required'); const body = await readBody(req); const before = campaign.mode; campaign.mode = body.mode === 'PLAY' ? 'PLAY' : 'PREPARATION'; save(); audit(campaign, actor, 'mode.change', 'campaign', campaign.id, 'mode', before, campaign.mode); save(); return json(res, 200, view(campaign, actor)); }
+    if (req.method === 'POST' && parts[3] === 'characters' && parts[4] && parts[5] === 'claim') {
+      const character = campaign.characters[parts[4]]; if (!character) return error(res, 404, 'Not found'); if (actor.role !== 'GM' && character.ownerId && character.ownerId !== actor.id) return error(res, 409, 'This character is already assigned.'); if (actor.role === 'PLAYER' && character.ownerId === actor.id) return json(res, 200, publicCharacter(character, true)); const before = character.ownerId; character.ownerId = actor.role === 'GM' ? (await readBody(req)).participantId || null : actor.id; character.version += 1; if (actor.role === 'PLAYER') db.participants[actor.id].characterId = character.id; audit(campaign, actor, 'character.claim', 'character', character.id, 'ownerId', before, character.ownerId); save(); return json(res, 200, publicCharacter(character, true));
+    }
+    if (req.method === 'PATCH' && parts[3] === 'characters' && parts[4]) {
+      const character = campaign.characters[parts[4]]; if (!character) return error(res, 404, 'Not found'); if (actor.role === 'PLAYER' && character.ownerId !== actor.id) return error(res, 404, 'Not found'); const body = await readBody(req); if (Number(body.version) !== character.version) return error(res, 409, 'Conflict: character changed elsewhere.'); const allowed = actor.role === 'GM' || campaign.mode === 'PREPARATION' ? ['name','className','ancestry','hp','hpMax','hope','stress','armor','complete','inventory','privateNotes'] : ['hp','hope','stress','inventory']; const changes = {}; for (const key of allowed) if (Object.prototype.hasOwnProperty.call(body, key)) changes[key] = body[key]; const before = {}; Object.keys(changes).forEach(k => before[k] = character[k]); Object.assign(character, changes); character.version += 1; audit(campaign, actor, 'character.update', 'character', character.id, 'state', before, changes); save(); return json(res, 200, publicCharacter(character, actor.role === 'GM' || character.ownerId === actor.id));
+    }
+    return error(res, 404, 'Not found');
+  } catch (e) { return error(res, e.message === 'Invalid JSON' ? 400 : 500, e.message === 'Invalid JSON' ? e.message : 'Internal server error'); }
+}
+
+const server = http.createServer((req, res) => route(req, res));
+server.listen(port, '127.0.0.1', () => console.log(`DaggerForge API listening on http://127.0.0.1:${port}`));
