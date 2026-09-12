@@ -14,8 +14,11 @@ test('GM can create a live campaign and open the character workflow', async ({ p
   await page.getByLabel('Character name').fill('Browser Hero');
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByLabel('Ancestry').selectOption({ label: 'Human' });
+  await page.getByLabel('Community').selectOption({ index: 1 });
   await page.getByLabel('Class').selectOption({ label: 'Bard' });
+  await page.getByLabel('Archetype').selectOption({ index: 1 });
   await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByLabel('Armor').selectOption({ index: 1 });
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Create character' }).click();
   await expect(page.getByRole('heading', { name: 'Browser Hero' })).toBeVisible();

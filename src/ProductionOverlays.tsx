@@ -43,10 +43,12 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
     <div className="help-content">
       <p>Use <strong>Preparation</strong> to configure characters, library content, and encounters. Switch to <strong>Play mode</strong> when the table is ready; configuration fields lock while runtime tracks remain available.</p>
       <div className="help-grid">
-        <div><b>Table View</b><span>Run the active scene, adjust Fear, manage adversary state, and update player resources.</span></div>
-        <div><b>GM Library</b><span>Keep bundled Daggerheart content read-only and save campaign copies for your own material.</span></div>
-        <div><b>Event Console</b><span>Review authoritative gameplay history and undo eligible changes without deleting the original event.</span></div>
-        <div><b>Connection</b><span>Connected, reconnecting, and offline status appears in the lower corner. State changes are blocked while offline.</span></div>
+        <div><b>Preparation</b><span>Build characters, copy bundled Daggerheart content into your campaign library, and prepare reusable encounter templates.</span></div>
+        <div><b>Play mode</b><span>Use Table View for the active scene, Fear, adversary runtime state, and player resources. Ended encounters remain historical.</span></div>
+        <div><b>Sessions</b><span>Session titles and notes autosave while you edit. Ending a session requires confirmation and keeps its timeline.</span></div>
+        <div><b>History & conflicts</b><span>Event Console filters by current session, character, participant, and event type. Character edits reconcile by field when safe.</span></div>
+        <div><b>GM Library</b><span>Bundled Daggerheart content is read-only. Save campaign copies, edit them with guided fields, archive them, or duplicate templates.</span></div>
+        <div><b>Connection</b><span>Realtime status appears in the lower corner. Reconnecting and offline states are announced without interrupting the workspace.</span></div>
       </div>
     </div>
   </Modal>;
