@@ -58,3 +58,8 @@ create table auth_sessions (
   expires_at timestamptz not null
 );
 create index auth_sessions_expiry_idx on auth_sessions(expires_at);
+create table rate_limit_buckets (
+  bucket_key text primary key,
+  window_started timestamptz not null,
+  hit_count integer not null
+);
