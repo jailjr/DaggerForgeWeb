@@ -2,6 +2,10 @@
 
 DaggerForge Web is a responsive Daggerheart campaign workspace based on the upstream [Torutu/daggerforge](https://github.com/Torutu/daggerforge) content and terminology. The production app runs as one Render web service: the Node API serves the built Vite client, uses hosted Postgres when `DATABASE_URL` is present, and exposes campaign-scoped SSE realtime updates.
 
+## Deployment status
+
+The Render service for [daggerforgeweb.onrender.com](https://daggerforgeweb.onrender.com) is currently suspended. Render returns `503 Service Unavailable` while it is suspended; resume the `DaggerForgeWeb` web service from the Render dashboard to make the public app available again. The service was suspended rather than deleted, so its deployment and hosted data remain recoverable.
+
 ## Local development
 
 Node.js 20+ is recommended (the production Docker image and CI use Node 20).
@@ -11,7 +15,7 @@ npm ci
 npm run dev:full
 ```
 
-In a second terminal, run `npm run dev` and open `http://localhost:5173`. Vite uses the development API at `http://127.0.0.1:8787`; the server falls back to `data/campaigns.json` only when `DATABASE_URL` is not configured. Development-only seed data is kept in the client for visual work. Production always requires a real server campaign and API state.
+In a second terminal, run `npm run dev` and open `http://localhost:5173`. The API listens on `http://127.0.0.1:8787`, and Vite routes development API requests there. The server falls back to `data/campaigns.json` only when `DATABASE_URL` is not configured. Development-only seed data is kept in the client for visual work. Production always requires a real server campaign and API state.
 
 ## Verification
 
@@ -22,13 +26,15 @@ npx playwright install   # once per machine
 npm run test:browser     # browser workflows and mobile navigation
 ```
 
-The browser suite starts the API and Vite dev server automatically. CI also builds the Docker image and runs Chromium tests.
+The browser suite starts the API and Vite dev server automatically. CI also builds the Docker image and runs Chromium tests. The current baseline is 23 server tests plus 9 browser tests, with one intentionally skipped workflow.
 
 ## Product capabilities
 
 - PREPARATION and PLAY campaign modes with server-enforced permissions.
 - GM creation and campaign-scoped access; player join links with nickname and persistent participant identity.
-- Character creation, finalization, Daggerheart traits, experiences, domain cards, equipment, inventory, runtime tracks, private notes, derived values, optimistic concurrency, and audit history.
+- Gameplay-first Character Sheets modeled on the Daggerheart reference: identity, ancestry, class/subclass, level, Evasion, Armor, six Traits, damage thresholds, HP, Stress, Hope, Experiences, weapons, armor, inventory, and Domain Cards.
+- Interactive runtime resources with marked HP/Stress slots, Stress overflow into HP, Hope tokens, Armor slots, keyboard/touch access, server persistence, version conflicts, permissions, audit events, and realtime updates.
+- Character creation, finalization, Daggerheart traits, experiences, domain cards, equipment, inventory, private notes, derived values, optimistic concurrency, and audit history.
 - GM Library browsing for Daggerheart base content plus guided campaign forms for adversaries, environments, items, and encounter templates.
 - Independent encounter instantiation, persistent Fear and adversary state, environment details, auditable adversary actions, sessions, announcements, and Event Console filtering/undo.
 - SSE realtime with reconnect recovery, safe player payloads, presence heartbeat, GM participant presence, conflict handling, and offline mutation blocking.
